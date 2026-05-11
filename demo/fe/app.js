@@ -1,7 +1,7 @@
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_SECONDS = 10;
 const CHUNK_SAMPLES_TARGET = TARGET_SAMPLE_RATE * CHUNK_SECONDS;
-const BE_URL = "http://localhost:8001/infer";
+const BE_URL = "/infer";
 
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");

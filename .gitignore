@@ -1,1 +1,5 @@
 *CLAUDE.md
+
+# TLS materials for local demo (never commit private keys)
+demo/be/cert.pem
+demo/be/key.pem

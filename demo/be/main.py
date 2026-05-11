@@ -1,19 +1,15 @@
 import io
+from pathlib import Path
 
 import torchaudio
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from inference import infer
 
-app = FastAPI()
+FE_DIR = Path(__file__).resolve().parent.parent / "fe"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
-    allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["*"],
-)
+app = FastAPI()
 
 
 @app.get("/health")
@@ -31,3 +27,6 @@ async def infer_endpoint(request: Request):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"failed to decode audio: {e}")
     return infer(waveform, sample_rate)
+
+
+app.mount("/", StaticFiles(directory=str(FE_DIR), html=True), name="fe")
