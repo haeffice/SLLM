@@ -23,7 +23,7 @@ async def infer_endpoint(request: Request):
     if not wav_bytes:
         raise HTTPException(status_code=400, detail="empty request body")
     try:
-        waveform, sample_rate = torchaudio.load(io.BytesIO(wav_bytes))
+        waveform, sample_rate = torchaudio.load_with_torchcodec(io.BytesIO(wav_bytes))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"failed to decode audio: {e}")
     return infer(waveform, sample_rate)
