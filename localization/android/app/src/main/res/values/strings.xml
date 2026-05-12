@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Localization</string>
-    <string name="hint_relay_url">Relay URL (http://&lt;PC_A_LAN_IP&gt;:9000)</string>
+    <string name="hint_server_url">Server URL (http://&lt;PC_LAN_IP&gt;:9001)</string>
     <string name="btn_start">Start</string>
     <string name="btn_stop">Stop</string>
     <string name="status_idle">대기 중</string>

@@ -1,25 +1,40 @@
-import io
+import logging
+from contextlib import asynccontextmanager
 
-import torchaudio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 
-from processor import process_stereo
+from llm import load_model
+from routers import inference, localize
 
-app = FastAPI()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("be")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("loading LLM model...")
+    app.state.llm_model = load_model()
+    log.info("LLM model ready")
+    try:
+        yield
+    finally:
+        app.state.llm_model = None
+        log.info("LLM model unloaded")
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model_loaded": getattr(app.state, "llm_model", None) is not None,
+    }
 
 
-@app.post("/localize")
-async def localize(request: Request):
-    data = await request.body()
-    if not data:
-        raise HTTPException(status_code=400, detail="empty request body")
-    try:
-        waveform, sample_rate = torchaudio.load_with_torchcodec(io.BytesIO(data))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"failed to decode audio: {e}")
-    return process_stereo(waveform, sample_rate)
+app.include_router(localize.router)
+app.include_router(inference.router)

@@ -51,12 +51,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun startRecording() {
         if (recorder != null) return
-        val relayUrl = binding.relayUrlInput.text?.toString()?.trim().orEmpty()
-        if (relayUrl.isEmpty()) {
-            setStatus("Relay URL을 입력하세요")
+        val serverUrl = binding.serverUrlInput.text?.toString()?.trim().orEmpty()
+        if (serverUrl.isEmpty()) {
+            setStatus("Server URL을 입력하세요")
             return
         }
-        val uploader = Uploader(relayUrl)
+        val uploader = Uploader(serverUrl)
 
         val rec = AudioRecorder(
             context = this,
@@ -75,9 +75,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.startBtn.isEnabled = false
         binding.stopBtn.isEnabled = true
-        binding.relayUrlInput.isEnabled = false
+        binding.serverUrlInput.isEnabled = false
         setStatus(getString(R.string.status_recording))
-        appendLog("녹음 시작: ${rec.sampleRate}Hz stereo, ${AudioRecorder.CHUNK_SECONDS}s chunks → $relayUrl")
+        appendLog("녹음 시작: ${rec.sampleRate}Hz stereo, ${AudioRecorder.CHUNK_SECONDS}s chunks → $serverUrl")
     }
 
     private fun stopRecording() {
@@ -91,7 +91,7 @@ class MainActivity : AppCompatActivity() {
         recorder = null
         binding.startBtn.isEnabled = true
         binding.stopBtn.isEnabled = false
-        binding.relayUrlInput.isEnabled = true
+        binding.serverUrlInput.isEnabled = true
     }
 
     private suspend fun uploadAndShow(uploader: Uploader, wav: ByteArray) {

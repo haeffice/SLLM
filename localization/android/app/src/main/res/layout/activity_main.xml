@@ -8,14 +8,14 @@
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="@string/hint_relay_url">
+        android:hint="@string/hint_server_url">
 
         <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/relayUrlInput"
+            android:id="@+id/serverUrlInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textUri"
-            android:text="http://192.168.0.42:9000" />
+            android:text="http://192.168.0.42:9001" />
     </com.google.android.material.textfield.TextInputLayout>
 
     <LinearLayout
