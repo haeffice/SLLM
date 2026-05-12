@@ -58,7 +58,8 @@ class MainActivity : AppCompatActivity() {
         }
         val uploader = Uploader(relayUrl)
 
-        recorder = AudioRecorder(
+        val rec = AudioRecorder(
+            context = this,
             onChunk = { wav ->
                 lifecycleScope.launch { uploadAndShow(uploader, wav) }
             },
@@ -69,13 +70,14 @@ class MainActivity : AppCompatActivity() {
                     cleanupRecorder()
                 }
             },
-        ).also { it.start() }
+        )
+        recorder = rec.also { it.start() }
 
         binding.startBtn.isEnabled = false
         binding.stopBtn.isEnabled = true
         binding.relayUrlInput.isEnabled = false
         setStatus(getString(R.string.status_recording))
-        appendLog("녹음 시작: 48kHz stereo, 2s chunks → $relayUrl")
+        appendLog("녹음 시작: ${rec.sampleRate}Hz stereo, ${AudioRecorder.CHUNK_SECONDS}s chunks → $relayUrl")
     }
 
     private fun stopRecording() {
