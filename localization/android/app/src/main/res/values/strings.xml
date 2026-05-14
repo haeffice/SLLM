@@ -1,13 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Localization</string>
+
     <string name="hint_server_url">Server URL (http://&lt;PC_LAN_IP&gt;:9001)</string>
+    <string name="hint_sample_rate">Sample rate (Hz)</string>
+    <string name="hint_length_seconds">Audio length (seconds)</string>
+    <string name="label_channels">Channels</string>
+    <string name="label_endpoint">Endpoint</string>
+
+    <string name="option_mono">Mono</string>
+    <string name="option_stereo">Stereo</string>
+    <string name="option_localize">/localize</string>
+    <string name="option_inference">/inference</string>
+
     <string name="btn_start">Start</string>
     <string name="btn_stop">Stop</string>
-    <string name="status_idle">대기 중</string>
-    <string name="status_recording">녹음 중</string>
-    <string name="status_stopped">정지됨</string>
-    <string name="status_error">오류</string>
+    <string name="btn_settings">Settings</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+
+    <string name="dialog_settings_title">Settings</string>
+
     <string name="status_no_permission">마이크 권한이 필요합니다</string>
-    <string name="azimuth_default">azimuth: —</string>
+    <string name="status_code_default">—</string>
+    <string name="status_indicator_desc">최근 응답 status 표시</string>
+    <string name="response_body_default">대기 중</string>
+    <string name="countdown_default">—</string>
+    <string name="countdown_format">%1$ds</string>
+
+    <string name="tag_spatial_ast">Spatial_AST</string>
+    <string name="tag_llama_adaptor">LLaMA Adaptor V2</string>
+    <string name="tag_llama2_7b">LLaMA2 7B</string>
+    <string name="tag_lora">LoRA</string>
+
+    <string name="wave_left">◀ Left</string>
+    <string name="wave_right">Right ▶</string>
 </resources>

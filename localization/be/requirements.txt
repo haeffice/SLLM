@@ -1,6 +1,25 @@
+# --- FastAPI / serving ----------------------------------------------------
 fastapi
 uvicorn[standard]
+
+# --- audio decoding for /localize -----------------------------------------
 torch
 torchaudio
 torchcodec
 numpy
+
+# --- BAT inference (/inference) -------------------------------------------
+# Vendored under models/bat/ — no external SLAM-LLM dependency.
+# Components: Llama-2-7b (transformers + peft LoRA) + Q-Former (transformers
+# Blip2QFormerModel) + Spatial-AST encoder (timm building blocks + torchlibrosa
+# STFT/LogmelFilterBank). Audio I/O via soundfile + scipy resample.
+transformers==4.51.0
+peft
+soundfile
+scipy
+torchlibrosa
+timm==0.9.10
+# unpickling helper — BAT/SpatialAST checkpoints embed omegaconf metadata
+# that torch.load needs to be able to import even though our own code
+# never instantiates ListConfig/DictConfig.
+omegaconf

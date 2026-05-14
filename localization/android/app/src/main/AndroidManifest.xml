@@ -12,10 +12,18 @@
         android:theme="@style/Theme.Localization"
         android:usesCleartextTraffic="true">
 
+        <!-- screenOrientation="landscape": stereo 입력의 좌/우 채널이 항상
+             화면의 좌/우와 일치하도록 자연 landscape 방향(상단=왼쪽,
+             하단=오른쪽) 한 가지로 고정. 폰을 뒤집어도 sensorLandscape처럼
+             reverseLandscape로 회전하지 않음.
+             configChanges: 회전·키보드 등 일시 이벤트로 액티비티가 재생성되어
+             녹음 상태가 끊기지 않도록 직접 처리한다고 선언. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name">
+            android:label="@string/app_name"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
