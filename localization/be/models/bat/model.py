@@ -34,6 +34,7 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ..base import AudioLLM
+from ._ckpt import trusted_torch_load
 from .preprocess import (
     AUDIO_SAMPLES,
     SAMPLE_RATE,
@@ -41,7 +42,7 @@ from .preprocess import (
     preprocess_waveform,
 )
 from .projector import EncoderProjectorQFormer, QFormerConfig
-from .spatial_ast import BinauralEncoder
+from .spatial_ast_frozen import SpatialASTFrozen
 
 logger = logging.getLogger(__name__)
 
@@ -68,23 +69,9 @@ DEFAULT_NUM_BEAMS = 4
 # Checkpoint helpers
 # -----------------------------------------------------------------------------
 
-def _trusted_torch_load(path: str):
-    """`torch.load` wrapper that disables the PyTorch 2.6+ safe-pickle default.
-
-    SLAM-LLM/BAT 체크포인트는 가중치 외에 학습 시 사용된 omegaconf
-    객체(`ListConfig`, `DictConfig`)를 메타데이터로 포함하고 있다. PyTorch 2.6
-    부터 `torch.load`의 기본값이 `weights_only=True`로 바뀌면서 이런 임의
-    클래스는 unpickling이 거부된다. 우리는 zhisheng01/SpatialAudio HF 데이터셋
-    원본을 신뢰하므로 명시적으로 `weights_only=False`를 사용한다. 또한
-    pickle이 ListConfig 같은 클래스를 객체로 복원하려면 그 모듈이 import
-    가능해야 하므로 `requirements.txt`에 `omegaconf`를 유지한다.
-    """
-    return torch.load(path, map_location="cpu", weights_only=False)
-
-
 def _load_encoder_state_dict(path: str) -> Dict[str, torch.Tensor]:
     """Spatial-AST 체크포인트 로드. {'model': sd} 또는 sd 그대로 둘 다 지원."""
-    blob = _trusted_torch_load(path)
+    blob = trusted_torch_load(path)
     if isinstance(blob, dict) and "model" in blob and isinstance(blob["model"], dict):
         return blob["model"]
     if isinstance(blob, dict):
@@ -192,30 +179,12 @@ class BAT(AudioLLM):
         # SLAM-LLM의 src/slam_llm/models/encoder.py:SpatialASTEncoder.load와 동일한
         # 생성 인자. num_classes=355는 AudioSet head 차원이라 forward 경로에선 안 쓰이지만
         # ckpt 키 모양을 맞추기 위해 그대로 둔다.
-        encoder = BinauralEncoder(
-            num_classes=355,
-            drop_path_rate=0.1,
-            embed_dim=768,
-            depth=12,
-            num_heads=12,
-            mlp_ratio=4,
-            qkv_bias=True,
-            norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        encoder = SpatialASTFrozen(
+            ckpt_path=encoder_ckpt,
+            freeze=True,
+            logger=logger,
+            num_classes=355
         )
-        enc_state = _load_encoder_state_dict(encoder_ckpt)
-        missing_keys, unexpected_keys = encoder.load_state_dict(enc_state, strict=False)
-        # ckpt가 모델보다 많은 키를 가질 수 있음 (사용하지 않는 부속 헤드 등)
-        # → unexpected는 무시해도 되지만 어떤 키가 버려졌는지 확인할 수 있게 sample 노출
-        applied = len(enc_state) - len(unexpected_keys)
-        logger.info(
-            "Spatial-AST: applied=%d, missing=%d, unexpected=%d "
-            "(sample missing: %s, sample unexpected: %s)",
-            applied, len(missing_keys), len(unexpected_keys),
-            missing_keys[:5], unexpected_keys[:5],
-        )
-        if applied == 0:
-            logger.warning("No encoder keys matched — Spatial-AST is randomly initialized!")
-        encoder.eval()
 
         logger.info("Loading BAT projector + LoRA delta from %s", projector_ckpt)
         proj_cfg = QFormerConfig(
@@ -226,7 +195,7 @@ class BAT(AudioLLM):
         )
         projector = EncoderProjectorQFormer(proj_cfg)
 
-        bat_state = _trusted_torch_load(projector_ckpt)
+        bat_state = trusted_torch_load(projector_ckpt)
         if isinstance(bat_state, dict) and "model" in bat_state and isinstance(bat_state["model"], dict):
             bat_state = bat_state["model"]
         if not isinstance(bat_state, dict):
@@ -291,6 +260,7 @@ class BAT(AudioLLM):
 
         # 2) 텍스트 프롬프트 + audio placeholder tokens
         prompt = format_prompt(question, None)
+        logger.info("Input Prompt : %s", prompt)
         audio_pseudo = torch.full((QUERY_LEN,), -1, dtype=torch.int64)
         prompt_ids = self.tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
         input_ids = torch.cat([audio_pseudo, prompt_ids]).unsqueeze(0).to(self.device)
