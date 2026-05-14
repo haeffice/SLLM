@@ -14,6 +14,20 @@
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:hint="@string/hint_server_url">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/serverUrlInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textUri"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
             android:hint="@string/hint_sample_rate">
 
             <com.google.android.material.textfield.TextInputEditText

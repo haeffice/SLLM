@@ -24,4 +24,7 @@
     <string name="status_no_permission">마이크 권한이 필요합니다</string>
     <string name="status_code_default">—</string>
     <string name="response_body_default">대기 중</string>
+
+    <string name="wave_left">◀ Left</string>
+    <string name="wave_right">Right ▶</string>
 </resources>
