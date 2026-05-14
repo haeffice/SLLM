@@ -25,12 +25,16 @@ class AudioLLM(ABC):
         """Load checkpoints and return an instance ready for inference."""
 
     @abstractmethod
-    def infer(self, wav_bytes: bytes, question: str) -> dict:
-        """Run inference on a single WAV chunk.
+    def infer(self, wav_bytes: bytes, questions: list[str]) -> dict:
+        """Run batch inference on a single WAV chunk with multiple prompts.
 
-        Returns a dict with at least:
-            - "response": str (model output text)
-            - "model_id": str (this model's id)
-        Additional keys (sample_rate, audio_samples, latency_ms, etc.)
-        are encouraged but not required.
+        The implementation should run the audio encoder once and broadcast
+        its features to every question in `questions`, then return a dict
+        containing at least:
+
+            - "responses": list[str] — one answer per question, same order
+            - "model_id":  str
+        And ideally `"response"` (a joined string for backward-compat
+        clients), `"questions"`, `"batch_size"`, and any other metadata
+        the model produces.
         """

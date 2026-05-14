@@ -155,6 +155,9 @@ class BAT(AudioLLM):
         logger.info("Loading BAT tokenizer + LLM from %s", llama_path)
         tokenizer = AutoTokenizer.from_pretrained(llama_path)
         tokenizer.pad_token_id = tokenizer.eos_token_id
+        # batch generation은 causal LM 특성상 left-padding이 필요
+        # (오른쪽 끝 토큰에서 다음 토큰을 이어 생성하므로 모든 시퀀스의 종단이 정렬돼야 함)
+        tokenizer.padding_side = "left"
 
         llm = AutoModelForCausalLM.from_pretrained(
             llama_path,
@@ -253,39 +256,53 @@ class BAT(AudioLLM):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def infer(self, wav_bytes: bytes, question: str) -> dict:
-        # 1) waveform 전처리
+    def infer(self, wav_bytes: bytes, questions: list[str]) -> dict:
+        if not questions:
+            raise ValueError("at least one question is required")
+
+        # 1) waveform 전처리 (단일 오디오, 모든 question에 대해 공유)
         waveform, n_input_samples = preprocess_waveform(wav_bytes)
         waveform = waveform.to(self.device)  # (1, 2, 320000)
 
-        # 2) 텍스트 프롬프트 + audio placeholder tokens
-        prompt = format_prompt(question, None)
-        logger.info("Input Prompt : %s", prompt)
-        audio_pseudo = torch.full((QUERY_LEN,), -1, dtype=torch.int64)
-        prompt_ids = self.tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
-        input_ids = torch.cat([audio_pseudo, prompt_ids]).unsqueeze(0).to(self.device)
+        # 2) 각 question을 Alpaca 템플릿으로 감싸고 left-padding으로 batch 화
+        prompts = [format_prompt(q, None) for q in questions]
+        logger.info("Batch input prompts (B=%d):", len(prompts))
+        for i, p in enumerate(prompts):
+            logger.info("  [%d] %s", i, p)
 
-        attention_mask = input_ids.ge(-1)            # (1, T) — 모두 True
-        modality_mask = input_ids.eq(-1)             # (1, T) — audio 자리만 True
+        encoded = self.tokenizer(
+            prompts,
+            padding=True,                # tokenizer.padding_side='left' (load 시 설정)
+            return_tensors="pt",
+        )
+        prompt_ids = encoded.input_ids                  # (B, max_prompt_len)
+        prompt_attn = encoded.attention_mask            # (B, max_prompt_len)
 
-        # 3) 인코더 + 프로젝터
-        # encoder 출력은 float32지만 LLM은 float16 → cast 필요
-        encoder_outs = self.encoder(waveform)        # (1, 3 + 512, 768)
-        proj_out = self.projector(encoder_outs)      # (1, 64, 4096)
+        B = prompt_ids.size(0)
+        audio_pseudo = torch.full((B, QUERY_LEN), -1, dtype=prompt_ids.dtype)
+        audio_attn = torch.ones((B, QUERY_LEN), dtype=prompt_attn.dtype)
+
+        # 구조: [audio×64, (pad×P), prompt_tokens]
+        input_ids = torch.cat([audio_pseudo, prompt_ids], dim=1).to(self.device)
+        attention_mask = torch.cat([audio_attn, prompt_attn], dim=1).to(self.device)
+        modality_mask = input_ids.eq(-1)                # (B, T)
+
+        # 3) 인코더 + 프로젝터 (오디오 1회만 실행, batch 차원으로 expand)
+        encoder_outs = self.encoder(waveform)           # (1, 3+512, 768)
+        proj_out = self.projector(encoder_outs)         # (1, 64, 4096)
         proj_out = proj_out.to(self.llm.dtype if hasattr(self.llm, "dtype") else torch.float16)
+        proj_out = proj_out.expand(B, -1, -1)           # (B, 64, 4096) — 동일 audio 공유
 
-        # 4) LLM input embedding 만들고 modality 위치에 proj_out 채워넣기
+        # 4) LLM input embedding + modality 자리에 audio embed 채워넣기
         safe_ids = input_ids.clamp(min=0)
         inputs_embeds = self.llm.get_input_embeddings()(safe_ids).clone()
-        # proj_out의 dtype에 맞춰 inputs_embeds도 일치시킴 (혹시 다를 수 있어)
         if inputs_embeds.dtype != proj_out.dtype:
             inputs_embeds = inputs_embeds.to(proj_out.dtype)
 
-        B, T = modality_mask.shape
         for b in range(B):
             inputs_embeds[b, modality_mask[b]] = proj_out[b]
 
-        # 5) Generate
+        # 5) Generate (batch)
         out_ids = self.llm.generate(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
@@ -301,12 +318,23 @@ class BAT(AudioLLM):
             eos_token_id=self.tokenizer.eos_token_id,
             pad_token_id=self.tokenizer.pad_token_id,
         )
-        response = self.tokenizer.batch_decode(out_ids, skip_special_tokens=True)[0].strip()
+        responses = [
+            r.strip()
+            for r in self.tokenizer.batch_decode(out_ids, skip_special_tokens=True)
+        ]
+
+        # FE의 기존 `response` 필드 호환 위해 Q/A 형식 묶음 문자열도 동봉
+        joined = "\n\n".join(
+            f"Q: {q}\nA: {r}" for q, r in zip(questions, responses)
+        )
 
         return {
-            "response": response,
+            "responses": responses,
+            "questions": questions,
+            "response": joined,
             "model_id": self.model_id,
             "sample_rate": SAMPLE_RATE,
             "audio_samples": AUDIO_SAMPLES,
             "input_audio_samples": int(n_input_samples),
+            "batch_size": B,
         }

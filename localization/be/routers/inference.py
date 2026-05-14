@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -8,18 +7,28 @@ from fastapi.responses import JSONResponse
 log = logging.getLogger("be.inference")
 router = APIRouter()
 
-DEFAULT_QUESTION = (
-    "Identify all sound events you hear in this audio, and for each event "
-    "describe its spatial location (direction and approximate distance). "
-    "Report both the detected events and their localization together."
-)
+# Multiple questions are dispatched as one batch through model.infer so the
+# audio encoder runs once and the LLM generates all answers in parallel.
+# Each entry probes a different task that BAT was trained on (detection /
+# direction / distance / joint), so the responses give a well-rounded view
+# of the same audio.
+DEFAULT_QUESTIONS: list[str] = [
+    "What sound events do you hear in this audio?",
+    "From which direction is the sound source coming?",
+    "How far away is the sound source?",
+    "List all sound events along with their direction and distance.",
+]
 
 
 @router.post("/inference")
 async def inference_endpoint(
     request: Request,
     model: str | None = Query(default=None, description="model id; defaults to server default"),
-    question: str = Query(default=DEFAULT_QUESTION),
+    question: list[str] | None = Query(
+        default=None,
+        description="repeat the parameter for multiple questions (e.g. ?question=A&question=B); "
+                    "if omitted, the server uses DEFAULT_QUESTIONS",
+    ),
 ):
     state = request.app.state
     model_id = model or state.default_model_id
@@ -66,16 +75,18 @@ async def inference_endpoint(
         log.info("inference rejected — empty body")
         raise HTTPException(status_code=400, detail="empty audio body")
 
+    questions = question if question else DEFAULT_QUESTIONS
     log.info(
-        "inference start: model=%s, bytes=%d, question=%r",
+        "inference start: model=%s, bytes=%d, batch=%d, questions=%s",
         model_id,
         len(wav_bytes),
-        question,
+        len(questions),
+        questions,
     )
 
     try:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, instance.infer, wav_bytes, question)
+        result = await loop.run_in_executor(None, instance.infer, wav_bytes, questions)
     except ValueError as e:
         log.warning("inference bad input on %s: %s", model_id, e)
         raise HTTPException(status_code=400, detail=str(e))
@@ -86,10 +97,19 @@ async def inference_endpoint(
     if isinstance(result, dict) and "model_id" not in result:
         result["model_id"] = model_id
 
-    response_text = result.get("response", "") if isinstance(result, dict) else result
-    log.info(
-        "inference done: model=%s, response=%s",
-        model_id,
-        response_text,
-    )
+    if isinstance(result, dict):
+        responses_list = result.get("responses")
+        if isinstance(responses_list, list):
+            log.info(
+                "inference done: model=%s, batch=%d, responses=%s",
+                model_id,
+                len(responses_list),
+                responses_list,
+            )
+        else:
+            log.info(
+                "inference done: model=%s, response=%s",
+                model_id,
+                result.get("response", ""),
+            )
     return result
