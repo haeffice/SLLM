@@ -8,7 +8,11 @@ from fastapi.responses import JSONResponse
 log = logging.getLogger("be.inference")
 router = APIRouter()
 
-DEFAULT_QUESTION = "What can you hear in this audio? Describe the sound and any spatial cues you notice."
+DEFAULT_QUESTION = (
+    "Identify all sound events you hear in this audio, and for each event "
+    "describe its spatial location (direction and approximate distance). "
+    "Report both the detected events and their localization together."
+)
 
 
 @router.post("/inference")
@@ -82,9 +86,10 @@ async def inference_endpoint(
     if isinstance(result, dict) and "model_id" not in result:
         result["model_id"] = model_id
 
+    response_text = result.get("response", "") if isinstance(result, dict) else result
     log.info(
-        "inference done: model=%s, response_len=%d",
+        "inference done: model=%s, response=%s",
         model_id,
-        len(str(result.get("response", "")) if isinstance(result, dict) else result),
+        response_text,
     )
     return result

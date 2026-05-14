@@ -28,7 +28,7 @@ import os
 from typing import Dict
 
 import torch
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ..base import AudioLLM
@@ -168,7 +168,7 @@ class BAT(AudioLLM):
 
         llm = AutoModelForCausalLM.from_pretrained(
             llama_path,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
         )
         peft_cfg = LoraConfig(
             r=LORA_R,
@@ -181,14 +181,25 @@ class BAT(AudioLLM):
         llm = get_peft_model(llm, peft_cfg)
         llm.eval()
 
+        # max_new_tokens를 명시적으로 쓰므로 max_length 디폴트 경고 억제
+        if getattr(llm, "generation_config", None) is not None:
+            llm.generation_config.max_length = None
+
         logger.info("Loading Spatial-AST encoder from %s", encoder_ckpt)
         encoder = build_binaural_encoder()
         enc_state = _load_encoder_state_dict(encoder_ckpt)
         missing_keys, unexpected_keys = encoder.load_state_dict(enc_state, strict=False)
+        # ckpt가 모델보다 많은 키를 가질 수 있음 (classification head 등 inference에 불필요한 가지)
+        # → unexpected는 무시해도 되지만 어떤 키가 버려졌는지 확인할 수 있게 sample 노출
+        applied = len(enc_state) - len(unexpected_keys)
         logger.info(
-            "Spatial-AST: missing=%d, unexpected=%d (sample missing: %s)",
-            len(missing_keys), len(unexpected_keys), missing_keys[:5],
+            "Spatial-AST: applied=%d, missing=%d, unexpected=%d "
+            "(sample missing: %s, sample unexpected: %s)",
+            applied, len(missing_keys), len(unexpected_keys),
+            missing_keys[:5], unexpected_keys[:5],
         )
+        if applied == 0:
+            logger.warning("No encoder keys matched — Spatial-AST is randomly initialized!")
         encoder.eval()
 
         logger.info("Loading BAT projector + LoRA delta from %s", projector_ckpt)
@@ -219,11 +230,26 @@ class BAT(AudioLLM):
         projector.eval()
 
         if lora_state:
-            mk, uk = llm.load_state_dict(lora_state, strict=False)
+            # PEFT 공식 API. `load_state_dict`을 직접 부르면 PEFT 래퍼가 만든
+            # 키 prefix(`base_model.model.…`)나 adapter_name(`.default.`) 변형을
+            # 우리가 직접 맞춰야 하는데, `set_peft_model_state_dict`는 ckpt 키를
+            # 현재 모델의 명명에 맞춰 변환해주고 LoRA 타입에 한정해서 적용한다.
+            load_result = set_peft_model_state_dict(llm, lora_state, adapter_name="default")
+            mk = list(getattr(load_result, "missing_keys", []) or [])
+            uk = list(getattr(load_result, "unexpected_keys", []) or [])
+            sample_lora = next(iter(lora_state.keys()), "<none>")
             logger.info(
-                "LoRA load into LLM: missing=%d unexpected=%d (sample unexpected: %s)",
-                len(mk), len(uk), uk[:5],
+                "LoRA load via set_peft_model_state_dict: applied=%d delta keys "
+                "(sample key: %s), missing=%d (= base LLM 가중치, from_pretrained로 "
+                "이미 로드됨), unexpected=%d",
+                len(lora_state), sample_lora, len(mk), len(uk),
             )
+            if uk:
+                logger.warning(
+                    "LoRA: %d unexpected keys did NOT match the PEFT model — "
+                    "ckpt 키 형식이 예상과 다를 수 있습니다. Sample: %s",
+                    len(uk), uk[:5],
+                )
         else:
             logger.warning("No LoRA keys found in BAT ckpt — LLM uses base weights only.")
 
