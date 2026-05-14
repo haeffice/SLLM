@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import partial
 from typing import Dict
 
 import torch
+import torch.nn as nn
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -39,7 +41,7 @@ from .preprocess import (
     preprocess_waveform,
 )
 from .projector import EncoderProjectorQFormer, QFormerConfig
-from .spatial_ast import build_binaural_encoder
+from .spatial_ast import BinauralEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +110,14 @@ def _split_projector_lora(
         elif k.startswith("module.encoder_projector."):
             proj[k[len("module.encoder_projector."):]] = v
         elif k.startswith("llm."):
-            lora[k[len("llm."):]] = v
+            # `.default` 슬롯은 set_peft_model_state_dict(adapter_name="default")이
+            # 다시 주입하므로 ckpt에 이미 들어있으면 미리 제거 (중복 방지).
+            lora[k[len("llm."):].replace(".default", "")] = v
         elif k.startswith("module.llm."):
-            lora[k[len("module.llm."):]] = v
+            lora[k[len("module.llm."):].replace(".default", "")] = v
         elif k.startswith("base_model.model.") or k.startswith("model."):
-            # 이미 peft 형식인 키 — 그대로 보존 후 peft 모델에 부어넣을 때
-            # llm.load_state_dict가 처리하도록 한다.
-            lora[k] = v
+            # 이미 peft 형식인 키 — `.default` 중복만 방지하고 그대로 보존.
+            lora[k.replace(".default", "")] = v
         else:
             unknown.append(k)
 
@@ -186,10 +189,22 @@ class BAT(AudioLLM):
             llm.generation_config.max_length = None
 
         logger.info("Loading Spatial-AST encoder from %s", encoder_ckpt)
-        encoder = build_binaural_encoder()
+        # SLAM-LLM의 src/slam_llm/models/encoder.py:SpatialASTEncoder.load와 동일한
+        # 생성 인자. num_classes=355는 AudioSet head 차원이라 forward 경로에선 안 쓰이지만
+        # ckpt 키 모양을 맞추기 위해 그대로 둔다.
+        encoder = BinauralEncoder(
+            num_classes=355,
+            drop_path_rate=0.1,
+            embed_dim=768,
+            depth=12,
+            num_heads=12,
+            mlp_ratio=4,
+            qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        )
         enc_state = _load_encoder_state_dict(encoder_ckpt)
         missing_keys, unexpected_keys = encoder.load_state_dict(enc_state, strict=False)
-        # ckpt가 모델보다 많은 키를 가질 수 있음 (classification head 등 inference에 불필요한 가지)
+        # ckpt가 모델보다 많은 키를 가질 수 있음 (사용하지 않는 부속 헤드 등)
         # → unexpected는 무시해도 되지만 어떤 키가 버려졌는지 확인할 수 있게 sample 노출
         applied = len(enc_state) - len(unexpected_keys)
         logger.info(
@@ -217,9 +232,12 @@ class BAT(AudioLLM):
         if not isinstance(bat_state, dict):
             raise ValueError(f"Unexpected projector ckpt format: {type(bat_state)}")
 
-        # 디버그: 첫 몇 개 키만 노출 (prefix 추정 잘못된 경우 사용자가 식별 가능)
-        sample_keys = list(bat_state.keys())[:6]
-        logger.info("BAT projector ckpt top-level keys (sample): %s", sample_keys)
+        # 디버그: encoder_projector.* 키 일부 노출 (projector 가중치가 들어있는지 확인용)
+        proj_keys = [k for k in bat_state.keys() if "encoder_projector" in k]
+        logger.info(
+            "BAT projector ckpt: total=%d, encoder_projector keys=%d (sample: %s)",
+            len(bat_state), len(proj_keys), proj_keys[:6],
+        )
 
         proj_state, lora_state = _split_projector_lora(bat_state)
         if proj_state:
