@@ -19,3 +19,7 @@ soundfile
 scipy
 torchlibrosa
 timm==0.9.10
+# unpickling helper — BAT/SpatialAST checkpoints embed omegaconf metadata
+# that torch.load needs to be able to import even though our own code
+# never instantiates ListConfig/DictConfig.
+omegaconf
