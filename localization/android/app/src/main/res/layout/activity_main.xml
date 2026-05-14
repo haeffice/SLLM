@@ -1,92 +1,173 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Landscape layout. Mapping from the previous portrait version:
-       top (URL + settings icon)  →  left side (settings icon only;
-                                                URL is now inside dialog)
-       middle (status + response) →  middle column
-       bottom (Start / Stop)      →  right side
-     Root is a FrameLayout so we can overlay the "Left" / "Right" wave
-     labels on top of everything when recording starts.
+<!-- Landscape layout. Rows top → bottom:
+       1) chunk progress bar | countdown | ⚙ 설정 아이콘
+       2) model 태그 (right-aligned: Spatial_AST · LLaMA Adaptor V2 · LLaMA2 7B · LoRA)
+       3) main : status code(좌상) + response(중앙 큰 글씨) | Start/Stop(우측 세로 중앙)
+     Wave 라벨은 FrameLayout 오버레이로 가운데에 잠시 떴다 사라짐.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Left: Settings icon -->
-        <ImageButton
-            android:id="@+id/settingsBtn"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_gravity="top"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/btn_settings"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_settings" />
-
-        <!-- Middle: status code + response area -->
+        <!-- Row 1: chunk progress + countdown + settings -->
         <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="16dp"
-            android:orientation="vertical">
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/chunkProgress"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:max="1000"
+                android:progress="0"
+                app:trackCornerRadius="4dp"
+                app:trackThickness="8dp" />
 
             <TextView
-                android:id="@+id/statusCodeView"
+                android:id="@+id/countdownText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/status_code_default"
+                android:layout_marginStart="12dp"
+                android:minWidth="56dp"
+                android:gravity="end"
+                android:text="@string/countdown_default"
                 android:textAppearance="?attr/textAppearanceLabelLarge"
                 android:textStyle="bold" />
 
+            <View
+                android:id="@+id/statusIndicator"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="12dp"
+                android:contentDescription="@string/status_indicator_desc" />
+
+            <ImageButton
+                android:id="@+id/settingsBtn"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/btn_settings"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_settings" />
+        </LinearLayout>
+
+        <!-- Row 2: model 태그 (right-aligned) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="end"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:text="@string/tag_spatial_ast"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textSize="10sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:text="@string/tag_llama_adaptor"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textSize="10sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:text="@string/tag_llama2_7b"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textSize="10sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:text="@string/tag_lora"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <!-- Row 3: main content -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <!-- 중앙: response -->
             <ScrollView
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:layout_marginTop="8dp"
+                android:layout_marginEnd="16dp"
                 android:fillViewport="true">
 
                 <TextView
                     android:id="@+id/responseView"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:lineSpacingExtra="8dp"
                     android:padding="8dp"
-                    android:lineSpacingExtra="6dp"
                     android:text="@string/response_body_default"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
                     android:textIsSelectable="true" />
             </ScrollView>
-        </LinearLayout>
 
-        <!-- Right: Start / Stop stack -->
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:gravity="center_vertical"
-            android:orientation="vertical">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/startBtn"
+            <!-- 우측: Start / Stop -->
+            <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minWidth="120dp"
-                android:text="@string/btn_start" />
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="vertical">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/stopBtn"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:enabled="false"
-                android:minWidth="120dp"
-                android:text="@string/btn_stop" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/startBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="120dp"
+                    android:text="@string/btn_start" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stopBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:minWidth="120dp"
+                    android:text="@string/btn_stop" />
+            </LinearLayout>
         </LinearLayout>
-
     </LinearLayout>
 
     <!-- Overlay: "Left" / "Right" channel labels, faded in/out on Start. -->

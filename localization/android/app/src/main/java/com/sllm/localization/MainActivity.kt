@@ -3,10 +3,16 @@ package com.sllm.localization
 import android.Manifest
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.LinearInterpolator
+import com.google.android.material.color.MaterialColors
+import kotlin.math.ceil
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +31,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var recorder: AudioRecorder? = null
+    private var chunkCountdown: ValueAnimator? = null
 
     // --- Settings state ------------------------------------------------------
     private var serverUrl = "http://192.168.0.42:9001"
@@ -51,6 +58,8 @@ class MainActivity : AppCompatActivity() {
         }
         binding.stopBtn.setOnClickListener { stopRecording() }
         binding.settingsBtn.setOnClickListener { showSettingsDialog() }
+
+        setStatusIndicator(null)
     }
 
     override fun onDestroy() {
@@ -145,7 +154,9 @@ class MainActivity : AppCompatActivity() {
         recorder = rec.also { it.start() }
 
         setControlsEnabled(recording = true)
+        setStatusIndicator(null) // start fresh — wait for first response
         playWaveCue()
+        startChunkCountdown(lengthSeconds)
     }
 
     /** Start 직후 좌/우 채널 label을 잠시 띄웠다가 fade out시키는 효과.
@@ -199,6 +210,39 @@ class MainActivity : AppCompatActivity() {
         recorder?.stop()
         recorder = null
         setControlsEnabled(recording = false)
+        cancelChunkCountdown()
+        setStatusIndicator(null)
+    }
+
+    /** 현재 녹음 중인 chunk가 서버로 떠날 때까지 남은 시간을 progress bar +
+     *  텍스트로 표시. `lengthSeconds`마다 자동으로 다시 시작되도록 무한 반복. */
+    private fun startChunkCountdown(seconds: Int) {
+        cancelChunkCountdown()
+        val total = seconds * 100
+        binding.chunkProgress.max = total
+        binding.chunkProgress.progress = total
+        binding.countdownText.text = getString(R.string.countdown_format, seconds)
+
+        chunkCountdown = ValueAnimator.ofInt(total, 0).apply {
+            duration = seconds * 1000L
+            interpolator = LinearInterpolator()
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            addUpdateListener { anim ->
+                val current = anim.animatedValue as Int
+                binding.chunkProgress.progress = current
+                val secsLeft = ceil(current / 100.0).toInt().coerceAtLeast(0)
+                binding.countdownText.text = getString(R.string.countdown_format, secsLeft)
+            }
+            start()
+        }
+    }
+
+    private fun cancelChunkCountdown() {
+        chunkCountdown?.cancel()
+        chunkCountdown = null
+        binding.chunkProgress.progress = 0
+        binding.countdownText.text = getString(R.string.countdown_default)
     }
 
     private fun setControlsEnabled(recording: Boolean) {
@@ -245,32 +289,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showResponse(code: Int, lines: List<String>) {
-        val colorRes = when (code) {
-            in 200..299 -> R.color.status_2xx
-            in 400..499 -> R.color.status_4xx
-            in 500..599 -> R.color.status_5xx
-            else -> null
-        }
-        binding.statusCodeView.text = code.toString()
-        if (colorRes != null) {
-            binding.statusCodeView.setTextColor(ContextCompat.getColor(this, colorRes))
-        } else {
-            binding.statusCodeView.setTextColor(
-                com.google.android.material.color.MaterialColors.getColor(
-                    binding.statusCodeView,
-                    com.google.android.material.R.attr.colorOnSurface,
-                )
-            )
-        }
-        // 응답이 여러 개면 한 줄씩 띄워서 표시 (XML의 lineSpacingExtra=6dp 적용됨)
+        setStatusIndicator(code)
         binding.responseView.text = lines.joinToString(separator = "\n")
     }
 
     private fun showError(message: String) {
-        binding.statusCodeView.text = getString(R.string.status_code_default)
-        binding.statusCodeView.setTextColor(
-            ContextCompat.getColor(this, R.color.status_4xx)
-        )
+        // 네트워크/업로드 오류엔 HTTP code가 없지만 4xx와 같은 의미로 빨간 채움.
+        setStatusIndicator(code = 400)
         binding.responseView.text = message
     }
+
+    /** 우측 상단의 작은 status indicator. null이면 빈 동그라미(테두리만),
+     *  값이 있으면 2xx 초록 / 4xx 빨강 / 5xx 보라로 채운 원. */
+    private fun setStatusIndicator(code: Int?) {
+        val view = binding.statusIndicator
+        val drawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            when {
+                code == null -> {
+                    setColor(Color.TRANSPARENT)
+                    val strokeColor = MaterialColors.getColor(
+                        view,
+                        com.google.android.material.R.attr.colorOutline,
+                    )
+                    setStroke(dpToPx(1.5f), strokeColor)
+                }
+                code in 200..299 ->
+                    setColor(ContextCompat.getColor(this@MainActivity, R.color.status_2xx))
+                code in 400..499 ->
+                    setColor(ContextCompat.getColor(this@MainActivity, R.color.status_4xx))
+                code in 500..599 ->
+                    setColor(ContextCompat.getColor(this@MainActivity, R.color.status_5xx))
+                else -> {
+                    // 1xx/3xx 등 색 규칙 외: 테두리만
+                    setColor(Color.TRANSPARENT)
+                    val strokeColor = MaterialColors.getColor(
+                        view,
+                        com.google.android.material.R.attr.colorOnSurface,
+                    )
+                    setStroke(dpToPx(1.5f), strokeColor)
+                }
+            }
+        }
+        view.background = drawable
+    }
+
+    private fun dpToPx(dp: Float): Int =
+        (dp * resources.displayMetrics.density).toInt()
 }

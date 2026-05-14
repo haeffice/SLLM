@@ -23,7 +23,15 @@
 
     <string name="status_no_permission">마이크 권한이 필요합니다</string>
     <string name="status_code_default">—</string>
+    <string name="status_indicator_desc">최근 응답 status 표시</string>
     <string name="response_body_default">대기 중</string>
+    <string name="countdown_default">—</string>
+    <string name="countdown_format">%1$ds</string>
+
+    <string name="tag_spatial_ast">Spatial_AST</string>
+    <string name="tag_llama_adaptor">LLaMA Adaptor V2</string>
+    <string name="tag_llama2_7b">LLaMA2 7B</string>
+    <string name="tag_lora">LoRA</string>
 
     <string name="wave_left">◀ Left</string>
     <string name="wave_right">Right ▶</string>
