@@ -3,20 +3,29 @@ package com.sllm.localization
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.radiobutton.MaterialRadioButton
+import com.google.android.material.textfield.TextInputEditText
 import com.sllm.localization.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var recorder: AudioRecorder? = null
+
+    // --- Settings state ------------------------------------------------------
+    private var sampleRate = 16_000
+    private var lengthSeconds = 10
+    private var outputChannels = 2          // 1 = mono, 2 = stereo
+    private var endpointPath = "/localize"  // "/localize" or "/inference"
 
     private val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -35,6 +44,7 @@ class MainActivity : AppCompatActivity() {
             else requestPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
         binding.stopBtn.setOnClickListener { stopRecording() }
+        binding.settingsBtn.setOnClickListener { showSettingsDialog() }
     }
 
     override fun onDestroy() {
@@ -47,6 +57,53 @@ class MainActivity : AppCompatActivity() {
         this, Manifest.permission.RECORD_AUDIO
     ) == PackageManager.PERMISSION_GRANTED
 
+    // -------------------------------------------------------------------------
+    // Settings dialog
+    // -------------------------------------------------------------------------
+
+    private fun showSettingsDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_settings, null)
+        val srInput = view.findViewById<TextInputEditText>(R.id.sampleRateInput)
+        val lenInput = view.findViewById<TextInputEditText>(R.id.lengthSecondsInput)
+        val radioMono = view.findViewById<MaterialRadioButton>(R.id.radioMono)
+        val radioStereo = view.findViewById<MaterialRadioButton>(R.id.radioStereo)
+        val radioLocalize = view.findViewById<MaterialRadioButton>(R.id.radioLocalize)
+        val radioInference = view.findViewById<MaterialRadioButton>(R.id.radioInference)
+
+        srInput.setText(sampleRate.toString())
+        lenInput.setText(lengthSeconds.toString())
+        radioMono.isChecked = outputChannels == 1
+        radioStereo.isChecked = outputChannels == 2
+        radioLocalize.isChecked = endpointPath == "/localize"
+        radioInference.isChecked = endpointPath == "/inference"
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_settings_title)
+            .setView(view)
+            .setPositiveButton(R.string.btn_save) { _, _ ->
+                val sr = srInput.text?.toString()?.trim()?.toIntOrNull()
+                val len = lenInput.text?.toString()?.trim()?.toIntOrNull()
+                if (sr == null || sr <= 0) {
+                    showError("Sample rate는 양의 정수여야 합니다")
+                    return@setPositiveButton
+                }
+                if (len == null || len <= 0) {
+                    showError("Audio length는 양의 정수여야 합니다")
+                    return@setPositiveButton
+                }
+                sampleRate = sr
+                lengthSeconds = len
+                outputChannels = if (radioMono.isChecked) 1 else 2
+                endpointPath = if (radioInference.isChecked) "/inference" else "/localize"
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
+    // -------------------------------------------------------------------------
+    // Recording lifecycle
+    // -------------------------------------------------------------------------
+
     private fun startRecording() {
         if (recorder != null) return
 
@@ -56,27 +113,12 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val sampleRate = binding.sampleRateInput.text?.toString()?.trim()?.toIntOrNull()
-        if (sampleRate == null || sampleRate <= 0) {
-            showError("Sample rate는 양의 정수여야 합니다")
-            return
-        }
-
-        val lengthSec = binding.lengthSecondsInput.text?.toString()?.trim()?.toIntOrNull()
-        if (lengthSec == null || lengthSec <= 0) {
-            showError("Audio length는 양의 정수여야 합니다")
-            return
-        }
-
-        val outputChannels = if (binding.radioMono.isChecked) 1 else 2
-        val endpointPath = if (binding.radioInference.isChecked) "/inference" else "/localize"
-
         val uploader = Uploader(serverUrl, endpointPath)
 
         val rec = AudioRecorder(
             sampleRate = sampleRate,
             outputChannels = outputChannels,
-            chunkSeconds = lengthSec,
+            chunkSeconds = lengthSeconds,
             onChunk = { wav ->
                 lifecycleScope.launch { uploadAndShow(uploader, wav) }
             },
@@ -89,9 +131,7 @@ class MainActivity : AppCompatActivity() {
         )
         recorder = rec.also { it.start() }
 
-        setSettingsEnabled(false)
-        binding.startBtn.isEnabled = false
-        binding.stopBtn.isEnabled = true
+        setControlsEnabled(recording = true)
     }
 
     private fun stopRecording() {
@@ -101,36 +141,51 @@ class MainActivity : AppCompatActivity() {
     private fun cleanupRecorder() {
         recorder?.stop()
         recorder = null
-        setSettingsEnabled(true)
-        binding.startBtn.isEnabled = true
-        binding.stopBtn.isEnabled = false
+        setControlsEnabled(recording = false)
     }
 
-    private fun setSettingsEnabled(enabled: Boolean) {
-        setGroupEnabled(binding.settingsPanel, enabled)
+    private fun setControlsEnabled(recording: Boolean) {
+        binding.startBtn.isEnabled = !recording
+        binding.stopBtn.isEnabled = recording
+        binding.serverUrlInput.isEnabled = !recording
+        binding.settingsBtn.isEnabled = !recording
+        binding.settingsBtn.alpha = if (recording) 0.4f else 1f
     }
 
-    private fun setGroupEnabled(group: ViewGroup, enabled: Boolean) {
-        group.isEnabled = enabled
-        for (i in 0 until group.childCount) {
-            val child = group.getChildAt(i)
-            if (child is ViewGroup) setGroupEnabled(child, enabled)
-            else child.isEnabled = enabled
-        }
-    }
+    // -------------------------------------------------------------------------
+    // Network + response display
+    // -------------------------------------------------------------------------
 
     private suspend fun uploadAndShow(uploader: Uploader, wav: ByteArray) {
         val result = runCatching {
             withContext(Dispatchers.IO) { uploader.postAudio(wav) }
         }
         result.onSuccess { r ->
-            showResponse(r.code, r.body)
+            showResponse(r.code, extractDisplayText(r.body))
         }.onFailure { e ->
             showError("upload error: ${e.message}")
         }
     }
 
-    private fun showResponse(code: Int, body: String) {
+    /** JSON 응답에서 화면에 보일 한 줄을 골라냄.
+     *  - 정상 응답: "response" 필드
+     *  - 에러 응답: "detail" 필드
+     *  - 둘 다 없으면 본문 원문 */
+    private fun extractDisplayText(body: String): String {
+        if (body.isBlank()) return ""
+        return try {
+            val obj = JSONObject(body)
+            when {
+                obj.has("response") -> obj.optString("response", body)
+                obj.has("detail") -> obj.optString("detail", body)
+                else -> body
+            }
+        } catch (_: Throwable) {
+            body
+        }
+    }
+
+    private fun showResponse(code: Int, text: String) {
         val colorRes = when (code) {
             in 200..299 -> R.color.status_2xx
             in 400..499 -> R.color.status_4xx
@@ -148,14 +203,14 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
-        binding.responseBodyView.text = body
+        binding.responseView.text = text
     }
 
     private fun showError(message: String) {
-        binding.statusCodeView.text = "—"
+        binding.statusCodeView.text = getString(R.string.status_code_default)
         binding.statusCodeView.setTextColor(
             ContextCompat.getColor(this, R.color.status_4xx)
         )
-        binding.responseBodyView.text = message
+        binding.responseView.text = message
     }
 }
