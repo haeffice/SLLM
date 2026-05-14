@@ -22,9 +22,15 @@ class SpatialASTFrozen(nn.Module):
         ckpt = trusted_torch_load(ckpt_path)
         state_dict = ckpt.get('model', ckpt)
         missing_keys, unexpected_keys = self.encoder.load_state_dict(state_dict, strict=False)
-        applied = len(state_dict) - len(unexpected_keys)
-        self.logger.info("Spatial-AST: applied=%d, missing=%d, unexpected=%d "
-                         "(sample missing %s, sample unexpected: %s)", applied, len(missing_keys), len(unexpected_keys), missing_keys[:5], unexpected_keys[:5])
+        total = len(state_dict)
+        applied = total - len(unexpected_keys)
+        if not missing_keys and not unexpected_keys:
+            self.logger.info("Spatial-AST loaded successfully (%d/%d keys)", applied, total)
+        else:
+            self.logger.warning(
+                "Spatial-AST partial load: %d/%d keys (missing=%d, unexpected=%d)",
+                applied, total, len(missing_keys), len(unexpected_keys),
+            )
         if applied == 0:
             self.logger.warning("No encoder keys matched - Spatial-AST is randomly initialized.")
 

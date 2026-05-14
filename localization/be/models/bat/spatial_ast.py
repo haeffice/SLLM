@@ -60,7 +60,7 @@ class SpatialAST(VisionTransformer):
                                                    f_min=50,
                                                    f_max=14000,
                                                    n_mels=128,
-                                                   sr=32000)
+                                                   sample_rate=32000)
 
         self.conv_downsample = nn.Sequential(
             nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1, bias=False),

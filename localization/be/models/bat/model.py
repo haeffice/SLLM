@@ -109,10 +109,9 @@ def _split_projector_lora(
             unknown.append(k)
 
     if unknown:
-        sample = unknown[:5]
         logger.warning(
-            "BAT projector ckpt: %d keys not recognized (sample: %s)",
-            len(unknown), sample,
+            "BAT projector ckpt: %d keys not recognized",
+            len(unknown),
         )
     return proj, lora
 
@@ -204,17 +203,25 @@ class BAT(AudioLLM):
         if not isinstance(bat_state, dict):
             raise ValueError(f"Unexpected projector ckpt format: {type(bat_state)}")
 
-        # 디버그: encoder_projector.* 키 일부 노출 (projector 가중치가 들어있는지 확인용)
+        # encoder_projector.* 키 존재 여부 빠른 확인 (projector 가중치가 들어있는지)
         proj_keys = [k for k in bat_state.keys() if "encoder_projector" in k]
         logger.info(
-            "BAT projector ckpt: total=%d, encoder_projector keys=%d (sample: %s)",
-            len(bat_state), len(proj_keys), proj_keys[:6],
+            "BAT projector ckpt: total=%d, encoder_projector keys=%d",
+            len(bat_state), len(proj_keys),
         )
 
         proj_state, lora_state = _split_projector_lora(bat_state)
         if proj_state:
             mk, uk = projector.load_state_dict(proj_state, strict=False)
-            logger.info("Projector load: missing=%d unexpected=%d", len(mk), len(uk))
+            total = len(proj_state)
+            applied = total - len(uk)
+            if not mk and not uk:
+                logger.info("Projector loaded successfully (%d/%d keys)", applied, total)
+            else:
+                logger.warning(
+                    "Projector partial load: %d/%d keys (missing=%d, unexpected=%d)",
+                    applied, total, len(mk), len(uk),
+                )
         else:
             logger.warning("No projector keys found in BAT ckpt — projector remains randomly initialized!")
         projector.eval()
@@ -225,20 +232,17 @@ class BAT(AudioLLM):
             # 우리가 직접 맞춰야 하는데, `set_peft_model_state_dict`는 ckpt 키를
             # 현재 모델의 명명에 맞춰 변환해주고 LoRA 타입에 한정해서 적용한다.
             load_result = set_peft_model_state_dict(llm, lora_state, adapter_name="default")
-            mk = list(getattr(load_result, "missing_keys", []) or [])
             uk = list(getattr(load_result, "unexpected_keys", []) or [])
-            sample_lora = next(iter(lora_state.keys()), "<none>")
-            logger.info(
-                "LoRA load via set_peft_model_state_dict: applied=%d delta keys "
-                "(sample key: %s), missing=%d (= base LLM 가중치, from_pretrained로 "
-                "이미 로드됨), unexpected=%d",
-                len(lora_state), sample_lora, len(mk), len(uk),
-            )
-            if uk:
+            # PEFT 모델의 missing은 늘 base LLM 가중치 수만큼 잡힘(이미 from_pretrained로
+            # 로드돼 있음)이라 LoRA 적용 성공 여부는 unexpected만 보면 됨.
+            total = len(lora_state)
+            applied = total - len(uk)
+            if not uk:
+                logger.info("LoRA loaded successfully (%d/%d delta keys)", applied, total)
+            else:
                 logger.warning(
-                    "LoRA: %d unexpected keys did NOT match the PEFT model — "
-                    "ckpt 키 형식이 예상과 다를 수 있습니다. Sample: %s",
-                    len(uk), uk[:5],
+                    "LoRA partial load: %d/%d delta keys (unexpected=%d)",
+                    applied, total, len(uk),
                 )
         else:
             logger.warning("No LoRA keys found in BAT ckpt — LLM uses base weights only.")
