@@ -1,0 +1,53 @@
+# Point-JEPA self-supervised pre-training config.
+# Single source of truth — run: bash run_train_PointJEPA.sh config.yaml
+
+data:
+  # Manifest JSON: {"data": [{"points_id": "rel/path/obj0001.npy"}, ...]}
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  points_root: /path/to/shapenet_npy    # points_path = points_root/points_id
+  num_points: 1024                      # points sampled per object
+
+model:
+  num_groups: 64                        # FPS centers / tokens
+  group_size: 32                        # KNN k per center
+  embed_dim: 384
+  depth: 12                             # encoder transformer layers
+  num_heads: 6
+  mlp_ratio: 4.0
+  predictor_dim: 192                    # narrow predictor
+  predictor_depth: 6
+
+masking:                                # Point-JEPA paper defaults
+  num_target_blocks: 4
+  target_ratio_min: 0.15
+  target_ratio_max: 0.20
+  context_ratio_min: 0.40
+  context_ratio_max: 0.75
+  smooth_l1_beta: 2.0
+
+ema:                                    # decay 0.995 -> 1.0 over pretrain
+  ema_decay: 0.995
+  ema_end_decay: 1.0
+  ema_anneal_end_step: 30000
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 1.0e-3
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 0.05
+  warmup_steps: 3000
+  max_steps: 30000
+  per_device_train_batch_size: 32
+  gradient_accumulation_steps: 1        # effective ~512 with 16 GPUs
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/point_jepa
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional student .pt warm-start
