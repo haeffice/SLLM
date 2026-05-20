@@ -1,0 +1,12 @@
+# EchoScan — CPU deps. Resolved/verified on Python 3.12, CPU. torch==2.8.0 baseline.
+# Install:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+#   pip install -r requirements.txt
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.13.0
+numpy==2.4.6
+scipy==1.17.1
+pyroomacoustics==0.10.1     # RIR simulation for make_echoscan_dataset.py
+PyYAML==6.0.3
+matplotlib==3.10.9          # optional — eval_echoscan.py --save-viz only
