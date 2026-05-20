@@ -12,6 +12,7 @@ which ``run.sh`` exports before starting uvicorn.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -53,7 +54,7 @@ def build_engine(cfg: Config, rec_tp_size: int) -> EngineHandle:
     tp_size = cfg.tp_size or rec_tp_size
     model_len = _model_len_from_config(cfg.model_path, cfg.max_model_len)
 
-    args = AsyncEngineArgs(
+    kwargs = dict(
         model=cfg.model_path,
         dtype="bfloat16" if cfg.dtype in ("", "auto") else cfg.dtype,
         tensor_parallel_size=tp_size,
@@ -67,6 +68,22 @@ def build_engine(cfg: Config, rec_tp_size: int) -> EngineHandle:
         enforce_eager=cfg.enforce_eager,
         disable_log_requests=True,  # we keep our own access log
     )
+
+    # vLLM's AsyncEngineArgs signature drifts between releases (we track the
+    # latest CPU wheel). Two known changes: `device` was removed (CPU is now
+    # auto-detected from the installed CPU wheel), and `disable_log_requests`
+    # was renamed to `enable_log_requests`. Keep only kwargs this build
+    # accepts, translating the log flag, so the engine survives both.
+    accepted = set(inspect.signature(AsyncEngineArgs.__init__).parameters)
+    if "disable_log_requests" not in accepted and "enable_log_requests" in accepted:
+        kwargs["enable_log_requests"] = not kwargs.pop("disable_log_requests")
+    dropped = [k for k in kwargs if k not in accepted]
+    for k in dropped:
+        del kwargs[k]
+    if dropped:
+        log.info("dropping AsyncEngineArgs kwargs unsupported by this vLLM: %s", dropped)
+
+    args = AsyncEngineArgs(**kwargs)
     log.info(
         "building AsyncLLMEngine — model=%s tp=%d dtype=%s max_model_len=%d",
         cfg.model_path, tp_size, args.dtype, model_len,
