@@ -36,7 +36,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Reuse the proven WavJEPA building blocks. `paper/WavJEPA` is a sibling
+# Reuse the proven WavJEPA building blocks. `paper/JEPA/WavJEPA` is a sibling
 # directory and its modules are flat (imported as top-level `WavJEPA`), so
 # add it to sys.path before importing.
 _WAVJEPA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "WavJEPA")

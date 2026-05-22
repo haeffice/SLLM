@@ -1,0 +1,51 @@
+# V-JEPA 2 self-supervised video pre-training config.
+# Single source of truth — run: bash run_train_VJEPA2.sh config.yaml
+
+data:
+  # Manifest JSON: {"data": [{"video_id": "clip0001.mp4"}, ...]}
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  video_root: /path/to/videos           # video_path = video_root/video_id
+  num_frames: 16                        # frames sampled per clip
+  img_size: 256                         # spatial resolution (square)
+
+model:
+  variant: vit_large                    # vit_large | vit_huge | vit_giant | vit_gigantic
+  patch_size: 16
+  tubelet_size: 2                       # temporal patch -> N = (T/2)(H/16)(W/16)
+  use_rope: true                        # 3D rotary pos-emb (V-JEPA 2 "_rope")
+  predictor_embed_dim: 384
+  predictor_depth: 12
+  predictor_num_heads: 12
+  predictor_mlp_ratio: 4.0
+
+masking:                                # V-JEPA 2 multiblock-3d
+  mask_ratios: [0.15, 0.7]              # short-range + long-range groups
+  mask_blocks_per_ratio: [8, 2]
+  min_context_ratio: 0.1                # >=10% tokens kept visible
+
+ema:                                    # linear tau anneal 0.998 -> 1.0
+  ema_decay: 0.998
+  ema_end_decay: 1.0
+  ema_anneal_end_step: 90000
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 6.25e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 0.04
+  warmup_steps: 12000
+  max_steps: 90000
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8        # x world_size -> effective batch
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/vjepa2
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional student .pt warm-start

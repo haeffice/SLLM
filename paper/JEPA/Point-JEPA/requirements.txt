@@ -1,0 +1,11 @@
+# Point-JEPA — CPU pre-training deps.
+# Resolved/verified on Python 3.12, CPU. torch==2.8.0 baseline.
+# FPS / KNN / greedy-sequencer are pure-torch (no torch_cluster needed).
+# Install:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+#   pip install -r requirements.txt
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.13.0
+numpy==2.4.6
+PyYAML==6.0.3

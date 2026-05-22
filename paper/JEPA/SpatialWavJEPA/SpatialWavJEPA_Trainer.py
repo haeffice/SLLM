@@ -1,7 +1,7 @@
 """Spatial WavJEPA (WavJEPA-Nat) JEPA trainer (PyTorch 2.8).
 
 `SpatialWavJEPATrainer` subclasses `WavJEPATrainer` (from
-`paper/WavJEPA/WavJEPA_Trainer.py`) and changes only the *student waveform
+`paper/JEPA/WavJEPA/WavJEPA_Trainer.py`) and changes only the *student waveform
 path* to the binaural WavJEPA-Nat design:
 
     * two INDEPENDENT per-channel conv stacks (`extract_audio_1/2`) instead
