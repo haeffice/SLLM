@@ -9,6 +9,7 @@ JEPA(Joint-Embedding Predictive Architecture) 및 공간/멀티모달 오디오 
 | `LLM-JEPA` | LLM-JEPA fine-tuning objective (arXiv:2509.14252). |
 | `Point-JEPA` | Point-JEPA 3D point-cloud SSL (WACV 2025). |
 | `EB-JEPA` | Energy-based JEPA image SSL (2026, Meta FAIR). |
+| `LeJEPA` | Provable JEPA + SIGReg image SSL, heuristics-free (2025, LeCun & Balestriero). |
 | `LeWorldModel` | End-to-end JEPA world model from pixels (2026, SIGReg). |
 | `WavJEPA` | WavJEPA audio SSL 추론 + JEPA trainer (+10 s variant). |
 | `SpatialWavJEPA` | WavJEPA-Nat 공간(binaural) 오디오 SSL 인코더 + JEPA trainer. |
