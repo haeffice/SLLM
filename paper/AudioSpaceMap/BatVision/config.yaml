@@ -1,0 +1,54 @@
+# BatVision supervised training config (single source of truth).
+# Run: bash run_train_BatVision.sh config.yaml
+#
+# Defaults below match the synthetic CPU smoke set produced by
+# make_batvision_dataset.py (BatVision-V1 on-disk layout). For the real
+# BatVision V1/V2 download, point data.dataset_dir at the dataset root and use
+# data.variant: v1 (max_depth 12) or v2 (max_depth 30). See README.
+
+data:
+  variant: v1                 # v1 (binaural .npy + depth .npy) | v2 (stereo .wav + depth .npy)
+  dataset_dir: data/smoke/train   # dataset root (V1: holds the CSV; V2: holds per-location folders)
+  train_csv: train.csv
+  valid_csv: val.csv          # optional; "" / null disables eval
+  test_csv: test.csv
+  audio_format: spectrogram   # the U-Net baseline takes a spectrogram
+  images_size: 256            # 256 for unet_256, 128 for unet_128 (MUST match model.generator)
+  max_depth: 12.0             # m — 12 (V1) / 30 (V2). Depth clip + MinMax scale.
+  depth_norm: true            # MinMax-normalise depth by max_depth → sigmoid head in [0,1]
+  n_fft: 512                  # STFT params (original BatVision paper)
+  win_length: 64
+  hop_length: 16
+  # location_blacklist: []    # (v2 only) location folders to exclude
+
+model:
+  generator: unet_256         # unet_256 (256x256) | unet_128 (128x128)
+  ngf: 64                     # base filters in the U-Net
+  norm: batch                 # batch | instance
+  in_channels: 2              # binaural
+
+loss:
+  type: L1                    # masked L1 over valid (depth>0) pixels
+
+optim:                        # AdamW + linear-warmup + cosine decay
+  num_train_epochs: 100
+  max_steps: -1               # >0 overrides num_train_epochs
+  learning_rate: 1.0e-3       # 1e-3 (V1) / 2e-3 (V2) in the paper
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 0.0
+  warmup_steps: 0
+  per_device_train_batch_size: 16   # paper uses 256 on GPU; small here for CPU
+  per_device_eval_batch_size: 16
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: ckpts/batvision
+  logging_steps: 10
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit:           # null = keep all
+  num_workers: 2
+  seed: 42
+  init_from:                  # optional BatVision .pt warm-start
