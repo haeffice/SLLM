@@ -1,0 +1,17 @@
+# PhaseCoder — CPU deps. Resolved/verified on Python 3.12, CPU. torch==2.8.0 baseline.
+# Install:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+#   pip install -r requirements.txt
+#
+# The STFT front end uses torch.stft, so torchaudio is not required. soundfile
+# is only needed to use real audio files as sources (--speech-dir); the default
+# synthetic source needs only numpy. pyroomacoustics is only needed for the
+# reverberant RIR simulator (--sim rir); the default free-field sim is numpy-only.
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.13.0
+numpy==2.4.6
+scipy==1.17.1
+PyYAML==6.0.3
+pyroomacoustics==0.10.1     # only for make_phasecoder_dataset.py --sim rir
+soundfile==0.13.1           # only for --speech-dir (real source files)

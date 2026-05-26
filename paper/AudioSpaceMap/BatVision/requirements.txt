@@ -1,0 +1,17 @@
+# BatVision — CPU deps. Resolved/verified on Python 3.12, CPU. torch==2.8.0 baseline.
+# Install:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+#   pip install -r requirements.txt
+#
+# Audio spectrograms use torch.stft and resizing uses F.interpolate, so neither
+# torchaudio nor torchvision is required. soundfile is only needed to read the
+# BatVision V2 stereo .wav files (V1 stores binaural .npy waveforms).
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.13.0
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.3
+PyYAML==6.0.3
+soundfile==0.13.1           # BatVision V2 (.wav) reader; not needed for V1 / smoke
+matplotlib==3.10.9          # optional — eval_batvision.py --save-viz only

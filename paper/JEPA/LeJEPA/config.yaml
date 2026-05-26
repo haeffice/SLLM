@@ -1,0 +1,55 @@
+# LeJEPA self-supervised image pre-training config.
+# Single source of truth — run: bash run_train_LeJEPA.sh config.yaml
+
+data:
+  # Manifest JSON: {"data": [{"image_id": "rel/path/img0001.npy"}, ...]}
+  # each .npy: (H, W, 3) uint8/float
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  image_root: /path/to/imagenet_npy     # image_path = image_root/image_id
+
+model:                                  # compact ViT-S/16 encoder
+  in_chans: 3
+  img_size: 224                         # base grid for positional embedding
+  patch_size: 16
+  embed_dim: 384
+  depth: 12
+  num_heads: 6
+  mlp_ratio: 4.0
+  pred_hidden: 1024                     # JEPA predictor MLP hidden width
+
+views:                                  # DINO-style multi-crop
+  num_global: 2
+  num_local: 6
+  global_size: 224
+  local_size: 98
+  global_scale: [0.3, 1.0]
+  local_scale: [0.05, 0.3]
+
+objective:                              # SIGReg (single trade-off hyper-param)
+  sigreg_coeff: 1.0                     # lambda: L = L_pred + lambda * SIGReg
+  num_slices: 1024                      # random projections (sketch width)
+  num_points: 17                        # Epps-Pulley quadrature knots
+  probe_last_layers: 2                  # CLS tokens concatenated at probe
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 5.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 5.0e-2                  # 5e-2 for ViT (5e-4 for ResNet)
+  warmup_steps: 5000
+  max_steps: 100000
+  per_device_train_batch_size: 128
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bf16: false                           # set true on GPU (paper uses bf16)
+
+train:
+  output_dir: /path/to/ckpts/lejepa
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional .pt warm-start
