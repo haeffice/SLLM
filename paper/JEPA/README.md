@@ -6,6 +6,7 @@ JEPA(Joint-Embedding Predictive Architecture) 및 공간/멀티모달 오디오 
 | 디렉터리 | 논문 / 내용 |
 |---|---|
 | `VJEPA2` | V-JEPA 2 video encoder + JEPA trainer (self-contained). |
+| `CAPI` | Cluster-and-predict latent patches: masked-latent MIM + Sinkhorn clustering (2025, Meta FAIR). |
 | `LLM-JEPA` | LLM-JEPA fine-tuning objective (arXiv:2509.14252). |
 | `Point-JEPA` | Point-JEPA 3D point-cloud SSL (WACV 2025). |
 | `EB-JEPA` | Energy-based JEPA image SSL (2026, Meta FAIR). |
