@@ -90,7 +90,7 @@ wget https://huggingface.co/datasets/zhisheng01/SpatialAudio/resolve/main/BAT/mo
 
 ```bash
 cd localization/be
-# 최초 1회 — run.sh 상단 3개 경로(BAT_LLAMA_PATH 등)를 실제 위치로 수정
+# 최초 1회 — run.sh 상단 3개 경로(BAT_LLM_PATH 등)를 실제 위치로 수정
 chmod +x run.sh
 ./run.sh
 ```
@@ -106,7 +106,7 @@ BAT_DEVICE=cuda:1 BE_PORT=9002 ./run.sh
 
 수동으로 가고 싶으면:
 ```bash
-export BAT_LLAMA_PATH=... BAT_ENCODER_CKPT=... BAT_PROJECTOR_CKPT=...
+export BAT_LLM_PATH=... BAT_ENCODER_CKPT=... BAT_PROJECTOR_CKPT=...
 uvicorn main:app --host 0.0.0.0 --port 9001
 ```
 

@@ -8,9 +8,14 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.google.android.material.color.MaterialColors
 import kotlin.math.ceil
 import androidx.activity.result.contract.ActivityResultContracts
@@ -60,6 +65,8 @@ class MainActivity : AppCompatActivity() {
         binding.settingsBtn.setOnClickListener { showSettingsDialog() }
 
         setStatusIndicator(null)
+        renderTags(fallbackTags()) // offline placeholder until /health responds
+        refreshTags()
     }
 
     override fun onDestroy() {
@@ -113,11 +120,13 @@ class MainActivity : AppCompatActivity() {
                     showError("Audio length는 양의 정수여야 합니다")
                     return@setPositiveButton
                 }
+                val urlChanged = url != serverUrl
                 serverUrl = url
                 sampleRate = sr
                 lengthSeconds = len
                 outputChannels = if (radioMono.isChecked) 1 else 2
                 endpointPath = if (radioInference.isChecked) "/inference" else "/localize"
+                if (urlChanged) refreshTags() // re-pull tags from the new server
             }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
@@ -155,6 +164,7 @@ class MainActivity : AppCompatActivity() {
 
         setControlsEnabled(recording = true)
         setStatusIndicator(null) // start fresh — wait for first response
+        binding.responseView.text = getString(R.string.response_body_default) // clear previous result
         playWaveCue()
         startChunkCountdown(lengthSeconds)
     }
@@ -288,10 +298,97 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 응답 표시. 글씨는 layout에서 bold 고정.
+     *  batch inference(2개 이상)일 때만 색을 입힌다:
+     *   - 1번째 response  : 전체 푸른색
+     *   - 2번째 response  : ','로 split해 마지막 조각은 보라색, 나머지는 초록색
+     *   - 3번째 이후       : 색 없이 기본색(bold만)
+     *  단일 응답(/localize·에러 등)은 색 없이 기본색. */
     private fun showResponse(code: Int, lines: List<String>) {
         setStatusIndicator(code)
-        binding.responseView.text = lines.joinToString(separator = "\n")
+        if (lines.size < 2) {
+            binding.responseView.text = lines.joinToString(separator = "\n")
+            return
+        }
+
+        val blue = ContextCompat.getColor(this, R.color.resp_first)
+        val green = ContextCompat.getColor(this, R.color.resp_rest)
+        val purple = ContextCompat.getColor(this, R.color.resp_last)
+
+        val sb = SpannableStringBuilder()
+        lines.forEachIndexed { i, line ->
+            val start = sb.length
+            sb.append(line)
+            val end = sb.length
+            when (i) {
+                0 -> sb.color(blue, start, end)
+                1 -> {
+                    val lastComma = line.lastIndexOf(',')
+                    if (lastComma >= 0) {
+                        sb.color(green, start, start + lastComma + 1) // 콤마 포함 앞부분
+                        sb.color(purple, start + lastComma + 1, end)  // 마지막 조각
+                    } else {
+                        sb.color(purple, start, end) // 콤마 없으면 전체가 '마지막 조각'
+                    }
+                }
+                // i >= 2: 색 없음 (기본색 + bold)
+            }
+            if (i != lines.lastIndex) sb.append("\n")
+        }
+        binding.responseView.text = sb
     }
+
+    private fun SpannableStringBuilder.color(color: Int, start: Int, end: Int) {
+        if (start >= end) return
+        setSpan(ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    // -------------------------------------------------------------------------
+    // Model 태그 (BE /health 기반)
+    // -------------------------------------------------------------------------
+
+    /** 서버에서 default 모델의 아키텍처 태그를 받아 우측 상단 chip row에 표시.
+     *  실패하면 직전 태그(또는 fallback)를 그대로 둔다. */
+    private fun refreshTags() {
+        val url = serverUrl
+        if (url.isBlank()) return
+        lifecycleScope.launch {
+            val tags = runCatching {
+                withContext(Dispatchers.IO) { Uploader.fetchTags(url) }
+            }.getOrDefault(emptyList())
+            if (tags.isNotEmpty()) renderTags(tags)
+        }
+    }
+
+    /** chip row를 비우고 태그 TextView들을 동적으로 채운다(layout의 정적 chip 대체). */
+    private fun renderTags(tags: List<String>) {
+        val row = binding.tagRow
+        row.removeAllViews()
+        val padH = dpToPx(10f)
+        val padV = dpToPx(3f)
+        val gap = dpToPx(6f)
+        tags.forEachIndexed { i, tag ->
+            val chip = TextView(this).apply {
+                text = tag
+                setBackgroundResource(R.drawable.bg_tag)
+                setPadding(padH, padV, padH, padV)
+                textSize = 10f
+            }
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { if (i > 0) marginStart = gap }
+            row.addView(chip, lp)
+        }
+    }
+
+    /** 서버 응답 전/오프라인 시 보여줄 기본 태그(BE의 bat 모델 값과 동일). */
+    private fun fallbackTags(): List<String> = listOf(
+        getString(R.string.tag_spatial_ast),
+        getString(R.string.tag_llama_adaptor),
+        getString(R.string.tag_llama2_7b),
+        getString(R.string.tag_lora),
+    )
 
     private fun showError(message: String) {
         // 네트워크/업로드 오류엔 HTTP code가 없지만 4xx와 같은 의미로 빨간 채움.

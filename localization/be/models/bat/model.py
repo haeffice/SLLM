@@ -5,7 +5,7 @@ SLAM-LLM의 `slam_model_seld` model_factory와 `slam_model.forward/generate`
 맞게 재구성한다. 외부 SLAM-LLM 패키지에 의존하지 않는다.
 
 가중치 파일 (환경변수로 지정):
-  - BAT_LLAMA_PATH    : Llama-2-7b HF checkpoint directory
+  - BAT_LLM_PATH    : Llama-2-7b HF checkpoint directory
                         (AutoTokenizer/AutoModelForCausalLM로 로드)
   - BAT_ENCODER_CKPT  : Spatial-AST finetuned.pth
                         ({'model': state_dict} 또는 state_dict 둘 다 지원)
@@ -122,6 +122,9 @@ def _split_projector_lora(
 
 class BAT(AudioLLM):
     model_id = "bat"
+    # Spatial-AST encoder → Q-Former (LLaMA-Adaptor-style) projector →
+    # LLaMA-2 7B with a LoRA delta. Surfaced to the FE via /health.
+    tags = ["Spatial_AST", "LLaMA Adaptor V2", "LLaMA2 7B", "LoRA"]
 
     def __init__(self, device, encoder, projector, llm, tokenizer):
         super().__init__(device)
@@ -136,12 +139,12 @@ class BAT(AudioLLM):
 
     @classmethod
     def load(cls, device: torch.device) -> "BAT":
-        llama_path = os.environ.get("BAT_LLAMA_PATH")
+        llama_path = os.environ.get("BAT_LLM_PATH")
         encoder_ckpt = os.environ.get("BAT_ENCODER_CKPT")
         projector_ckpt = os.environ.get("BAT_PROJECTOR_CKPT")
         missing = [
             name for name, val in [
-                ("BAT_LLAMA_PATH", llama_path),
+                ("BAT_LLM_PATH", llama_path),
                 ("BAT_ENCODER_CKPT", encoder_ckpt),
                 ("BAT_PROJECTOR_CKPT", projector_ckpt),
             ] if not val

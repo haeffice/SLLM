@@ -15,6 +15,10 @@ import torch
 
 class AudioLLM(ABC):
     model_id: str = ""
+    # Human-readable architecture tags shown in the FE's top-right chip row.
+    # The BE is the single source of truth so the chips track whichever model
+    # run.sh enables (see llm.tags_for / main.health).
+    tags: list[str] = []
 
     def __init__(self, device: torch.device):
         self.device = device

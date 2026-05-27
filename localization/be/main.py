@@ -6,7 +6,7 @@ from enum import Enum
 
 from fastapi import FastAPI, Request
 
-from llm import default_model_id, enabled_model_ids, load_one
+from llm import default_model_id, enabled_model_ids, load_one, tags_for
 from routers import inference, localize
 
 logging.basicConfig(
@@ -97,6 +97,7 @@ def health(request: Request):
                 "status": s.value,
                 "error": request.app.state.model_errors.get(mid),
                 "device": _device_for_loaded(request.app.state.models.get(mid)),
+                "tags": tags_for(mid),
             }
             for mid, s in request.app.state.model_status.items()
         },
