@@ -63,58 +63,16 @@
                 android:src="@drawable/ic_settings" />
         </LinearLayout>
 
-        <!-- Row 2: model 태그 (right-aligned) -->
+        <!-- Row 2: model 태그 (right-aligned, populated at runtime from
+             /health so the chips track whichever model run.sh enables) -->
         <LinearLayout
+            android:id="@+id/tagRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:gravity="end"
             android:orientation="horizontal"
-            android:paddingHorizontal="4dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="3dp"
-                android:text="@string/tag_spatial_ast"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textSize="10sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/bg_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="3dp"
-                android:text="@string/tag_llama_adaptor"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textSize="10sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/bg_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="3dp"
-                android:text="@string/tag_llama2_7b"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textSize="10sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/bg_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="3dp"
-                android:text="@string/tag_lora"
-                android:textAppearance="?attr/textAppearanceLabelSmall"
-                android:textSize="10sp" />
-        </LinearLayout>
+            android:paddingHorizontal="4dp" />
 
         <!-- Row 3: main content -->
         <LinearLayout
@@ -141,7 +99,8 @@
                     android:padding="8dp"
                     android:text="@string/response_body_default"
                     android:textAppearance="?attr/textAppearanceHeadlineSmall"
-                    android:textIsSelectable="true" />
+                    android:textIsSelectable="true"
+                    android:textStyle="bold" />
             </ScrollView>
 
             <!-- 우측: Start / Stop -->

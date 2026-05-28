@@ -3,4 +3,9 @@
     <color name="status_2xx">#388E3C</color>
     <color name="status_4xx">#D32F2F</color>
     <color name="status_5xx">#7B1FA2</color>
+
+    <!-- Batch-inference response coloring (see MainActivity.showResponse) -->
+    <color name="resp_first">#1565C0</color>  <!-- 1st response: blue -->
+    <color name="resp_rest">#2E7D32</color>   <!-- 2nd response, segments before last comma: green -->
+    <color name="resp_last">#6A1B9A</color>   <!-- 2nd response, last comma segment: purple -->
 </resources>

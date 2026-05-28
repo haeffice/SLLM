@@ -1,0 +1,14 @@
+# JEPA Neural Tokenizer — CPU pre-training / eval deps.
+# Resolved/verified on Python 3.12, CPU. torch==2.8.0 baseline.
+# Self-contained (no external codec/encoder download): the synthetic smoke
+# test writes its own 24 kHz wavs.
+# Install:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+#   pip install -r requirements.txt
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.13.0
+numpy==2.4.6
+scipy==1.17.1
+soundfile==0.13.1
+PyYAML==6.0.3
