@@ -1,0 +1,9 @@
+# --- FastAPI / serving ----------------------------------------------------
+fastapi
+uvicorn[standard]
+
+# --- audio decoding for /translate ----------------------------------------
+torch
+torchaudio
+torchcodec
+numpy

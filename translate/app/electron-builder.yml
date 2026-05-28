@@ -1,0 +1,16 @@
+appId: com.sllm.translate
+productName: SLLM Translate
+directories:
+  output: dist
+files:
+  - "src/**/*"
+  - "package.json"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false

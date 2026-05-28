@@ -1,0 +1,17 @@
+{
+  "name": "sllm-translate",
+  "version": "0.1.0",
+  "description": "Real-time speech-translation desktop client (Electron)",
+  "author": "SLLM",
+  "main": "src/main/main.js",
+  "scripts": {
+    "gen:config": "node scripts/gen-config.js",
+    "start": "npm run gen:config && electron .",
+    "prebuild": "npm run gen:config",
+    "build:win": "npm run gen:config && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
