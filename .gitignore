@@ -6,3 +6,5 @@
 # TLS materials for local demo (never commit private keys)
 demo/be/cert.pem
 demo/be/key.pem
+translate/be/cert.pem
+translate/be/key.pem
