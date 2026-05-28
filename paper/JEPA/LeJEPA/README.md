@@ -11,6 +11,10 @@ objective has **one** trade-off hyper-parameter.
 - **Paper:** *LeJEPA: Provable and Scalable Self-Supervised Learning Without
   the Heuristics*, Randall Balestriero, Yann LeCun, 2025 —
   https://arxiv.org/abs/2511.08544
+- **후속 이론 (identifiability, 2026):** *When Does LeJEPA Learn a World
+  Model?*, Klindt Lab — https://arxiv.org/abs/2605.26379 (핵심 정리 4개를
+  Lean 4로 형식검증). 가우시안 선택을 *식별가능성*으로 정당화 — 아래
+  "이론적 근거" 절 참조.
 - **Official code (referenced heavily for the design):**
   https://github.com/rbalestr-lab/lejepa  (~1.1k★)
 - **Lineage:** SIGReg here is the *source* regulariser later reused by the
@@ -81,6 +85,41 @@ SIGReg   = mean_slice T_slice
 > 해상도가 다른 multi-crop을 한 네트워크로 처리하고 linear-probe가 마지막
 > 레이어들의 CLS 토큰을 읽을 수 있도록 **compact ViT**를 사용합니다(`../EB-JEPA`
 > 의 ResNet과 상보적).
+
+## 이론적 근거: 왜 *반드시* 가우시안인가 (식별가능성)
+
+후속 이론 논문 **"When Does LeJEPA Learn a World Model?"** (Klindt Lab, 2026,
+arXiv:2605.26379; 핵심 정리 4개를 **Lean 4로 형식검증**)이 LeJEPA의 가우시안
+선택에 원 논문보다 강한 근거를 줍니다. 원 LeJEPA가 "등방성 가우시안이
+downstream 위험을 최소화한다"는 *통계적* 주장이었다면, 이 논문은 인코더가
+**세계의 잠재변수를 회전만 빼고 선형 복원(linear identifiability)하며, 그것이
+성립하는 잠재분포는 오직 가우시안뿐**임을 증명합니다 — 즉 가우시안은 인코더가
+진짜 world model이 되기 위한 *유일한 필요조건*입니다.
+
+**세계 가정:** 잠재 독립 + 정상성(`p(z)=p(z')`) + 가법잡음 전이
+`z'_i = m_i(z_i) + η_i`. 핵심 사례는 가우시안 잠재 `z ~ N(0,I)`의 OU 전이
+`z' = ρz + √(1-ρ²)·η` 로, 정렬용 positive pair(같은 대상의 두 뷰)를 만든다.
+정렬 손실은 pair 상관 최대화와 동치: `L(h) = 2n - 2·Σ_i E[h_i(z')·h_i(z)]`.
+
+- **정리 5.1 (선형 식별가능성):** `h(z) ~ N(0,I)`인 임의의 측정가능 `h`에 대해
+  `L(h) ≥ 2(1-ρ)n`, **등호 ⟺ `h(z) = Qz`, `Q ∈ O(n)`**. 정렬 + 가우시안
+  (whitening) 제약의 최적해는 진짜 잠재를 회전/반사만 빼고 복원한 것뿐이다.
+- **정리 5.2 (가우시안 유일성):** 가우시안 측도에서 Hermite 분해 시 차수 `d`
+  성분의 시간 상관 기여가 `ρ^d` 라, `ρ<1` 이면 `d≥2` 비선형 성분은 선형항보다
+  항상 작다 → 최적해는 직교 선형(`w₁=1`). 역으로 첫 고유함수가 affine이려면
+  `log p(z) ∝ -(z-μ)²`, 즉 **가우시안만** 선형 식별을 보장한다(비가우시안은
+  단조변환까지로 약화). 실험상 복원 R²이 `α=2`(가우시안)에서 뾰족하게 정점.
+- **정리 5.3 (근사 식별):** 정렬 갭 `δ`·whitening 오차 `ε`, `D = δ/(2ρ(1-ρ))`
+  일 때 `∃Q: E‖h(z) - Qz‖² ≤ D + (ε+D)²` — 오차가 우아하게 열화하며 **정렬이
+  병목, whitening은 거의 공짜**(SIGReg의 유계 gradient·둔감한 `λ`와 부합).
+- **정리 5.4 (계획):** `h(z)=Qz` + `O(n)`-불변 비용이면 학습 잠재공간의 최적
+  가치·정책이 진짜 세계의 것과 동일 — 절대좌표 복원 없이도 제어 가능(=world
+  model). DMC Reacher planning 품질이 linear identifiability와 단조 상관.
+
+정리하면 본 repo 라인업에서 가우시안의 위상은 세 층위로 정당화된다:
+**collapse 방지**(최대엔트로피·등방성) → **downstream 최적**(원 LeJEPA, risk
+최소화) → **world model**(이 논문, 선형 식별의 유일 분포). 마지막 층위는
+`../LeWorldModel`(SIGReg를 월드모델/제어에 재사용)의 직접적 이론 근거다.
 
 ## 구성 파일
 
