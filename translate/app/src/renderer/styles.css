@@ -202,13 +202,29 @@ body {
   max-height: calc(var(--recent-lines) * var(--band-line-height));
   overflow: hidden;
   line-height: var(--band-line-height);
-  color: #000;
   font-weight: 700;
   font-size: 20px;
 }
-.overlay-line {
+.overlay-text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+.overlay-confirmed {
+  color: #000;
+}
+.overlay-prediction {
+  color: #888;
+}
+/* Blinking typewriter caret; color set inline by overlay-band.js (gray over a
+   prediction tail, black over confirmed). Hidden when not typing. */
+.overlay-caret {
+  margin-left: 1px;
+  animation: overlay-caret-blink 1s steps(1, end) infinite;
+}
+@keyframes overlay-caret-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 /* ---- dialogs ---- */
@@ -237,6 +253,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Tall forms (hyperparameters) scroll inside the dialog. */
+  max-height: 70vh;
+  overflow-y: auto;
 }
 .field {
   display: flex;
@@ -252,6 +271,21 @@ body {
   border: 1px solid #d6d6d3;
   border-radius: 6px;
   font-size: 13px;
+}
+/* Toggle/select rows: label left, control right on a single line. */
+.field-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.field-row select {
+  flex: 0 0 auto;
+}
+.field-row input[type="checkbox"] {
+  height: auto;
+  width: auto;
+  margin: 0;
 }
 .dialog-actions {
   display: flex;

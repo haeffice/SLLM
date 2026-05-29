@@ -7,11 +7,12 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     settings,
     serverBase: settings.serverUrl || "",
     langDir: settings.languageDirection || "en2ko",
+    task: settings.taskMode || "translate",
     capturing: false,
+    micToggling: false,
     capture: null,
     band: null,
-    inFlight: false,
-    pending: null,
+    ws: null,
   };
 
   // ---- DOM ---------------------------------------------------------------
@@ -33,10 +34,11 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   const controls = el("div", "controls");
   const micBtn = button("마이크 켜기", "ctrl-btn");
   const langBtn = button(langLabel(state.langDir), "ctrl-btn");
+  const taskBtn = button(taskLabel(state.task), "ctrl-btn");
   const optionsBtn = button("옵션", "ctrl-btn");
   const hyperBtn = button("하이퍼파라미터", "ctrl-btn");
   const statusEl = SLLM.statusDot.create();
-  controls.append(micBtn, langBtn, optionsBtn, hyperBtn, statusEl);
+  controls.append(micBtn, langBtn, taskBtn, optionsBtn, hyperBtn, statusEl);
 
   const tagsRow = el("div", "tags-row");
 
@@ -76,90 +78,181 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     searchInput.value = e.url || searchInput.value;
   });
 
-  // ---- capture + translate ----------------------------------------------
-  function currentLangs() {
+  // ---- capture + translate (WebSocket stream) ---------------------------
+  // The socket is opened lazily on the first mic-on and then kept alive across
+  // mic toggles and direction/task switches: those mutate the live session via
+  // control messages (see net/client.js) instead of reconnecting. The socket is
+  // only torn down on a server-URL change or when the view is destroyed.
+  function langs() {
     return state.langDir === "ko2en" ? { src: "ko", tgt: "en" } : { src: "en", tgt: "ko" };
   }
 
-  function enqueue(blob) {
-    if (state.inFlight) {
-      state.pending = blob; // single-slot: keep only the most recent chunk
-      return;
-    }
-    send(blob);
+  function makeCapture() {
+    return SLLM.AudioCapture.create((bytes) => {
+      if (state.ws) state.ws.sendAudio(bytes);
+    });
   }
 
-  async function send(blob) {
-    state.inFlight = true;
-    const { src, tgt } = currentLangs();
-    try {
-      const { status, json } = await SLLM.net.postTranslate(state.serverBase, blob, src, tgt);
-      SLLM.statusDot.setFromStatus(statusEl, status);
-      if (json && json.text) state.band.addText(json.text);
-    } catch (_) {
-      SLLM.statusDot.setFromStatus(statusEl, null);
-    } finally {
-      state.inFlight = false;
-      if (state.pending) {
-        const b = state.pending;
-        state.pending = null;
-        send(b);
-      }
+  // Open a socket if one isn't already up. The current direction/task ride the
+  // query string so the first frames are decoded the right way. The handlers
+  // are guarded with `state.ws === ws` so a previous socket's late-firing close
+  // (close() resolves asynchronously) can't clobber a freshly-opened one.
+  function connectWs() {
+    if (state.ws || !state.serverBase) return;
+    const { src, tgt } = langs();
+    let ws;
+    ws = SLLM.net.connectWs(state.serverBase, { src, tgt, task: state.task }, {
+      onOpen: () => {
+        if (state.ws !== ws) return;
+        SLLM.statusDot.setFromStatus(statusEl, 200);
+        // Seed the session with the configured hyperparameters.
+        if (state.settings.hyperparameters) ws.setOptions(state.settings.hyperparameters);
+      },
+      onMessage: (obj) => {
+        if (!obj) return;
+        if (!("confirmed" in obj || "prediction" in obj || "eos" in obj)) return;
+        // Absent keys mean "unchanged" → pass undefined so the band keeps them
+        // (avoids wiping confirmed black text while only prediction streams).
+        const confirmed = "confirmed" in obj ? obj.confirmed || "" : undefined;
+        let prediction;
+        if (obj.eos) {
+          // End-of-sentence: the tentative tail folded into `confirmed`, so
+          // drop any lingering prediction (gray) right away.
+          prediction = "";
+        } else if ("prediction" in obj) {
+          prediction = obj.prediction || "";
+        }
+        state.band.update(confirmed, prediction);
+      },
+      onError: () => {
+        if (state.ws === ws) SLLM.statusDot.setFromStatus(statusEl, 500);
+      },
+      onClose: () => {
+        if (state.ws !== ws) return; // stale socket we already replaced/closed
+        state.ws = null;
+        SLLM.statusDot.setFromStatus(statusEl, null);
+        // Remote drop: stop the local mic so the button reflects reality.
+        if (state.capturing) stopMic();
+      },
+    });
+    state.ws = ws;
+  }
+
+  // Drop the current socket as an intentional close: clear state.ws first so the
+  // (async) onClose sees a stale ref and skips the remote-drop cleanup.
+  function closeWs() {
+    if (state.ws) {
+      const ws = state.ws;
+      state.ws = null;
+      ws.close();
     }
   }
 
-  async function startCapture() {
+  async function startMic() {
     if (!state.serverBase) {
       alert("서버 URL이 설정되지 않았습니다. 옵션에서 서버 URL을 입력하세요.");
       return;
     }
-    state.capture = SLLM.AudioCapture.create(enqueue);
+    connectWs();
+    state.band.clear();
+    state.capture = makeCapture();
     try {
-      await state.capture.start(state.settings.audioSource, state.settings.sampleRate);
+      await state.capture.start(state.settings.audioSource);
       state.capturing = true;
       micBtn.textContent = "마이크 끄기";
       micBtn.classList.add("active");
     } catch (e) {
-      state.capture = null;
       alert(`오디오 시작 실패: ${e.message}`);
+      await state.capture.stop();
+      state.capture = null;
     }
   }
 
-  async function stopCapture() {
-    if (state.capture) await state.capture.stop();
-    state.capture = null;
+  async function stopMic() {
+    if (state.capture) {
+      await state.capture.stop();
+      state.capture = null;
+    }
     state.capturing = false;
-    state.pending = null;
     micBtn.textContent = "마이크 켜기";
     micBtn.classList.remove("active");
+    // Keep the socket open; just tell the server to reset its decode buffer.
+    if (state.ws) state.ws.micOff();
   }
 
-  micBtn.addEventListener("click", () => (state.capturing ? stopCapture() : startCapture()));
+  // Swap the audio source mid-capture without disturbing the socket.
+  async function restartCapture() {
+    if (state.capture) {
+      await state.capture.stop();
+      state.capture = null;
+    }
+    state.capture = makeCapture();
+    try {
+      await state.capture.start(state.settings.audioSource);
+    } catch (e) {
+      alert(`오디오 시작 실패: ${e.message}`);
+      await stopMic();
+    }
+  }
+
+  // Serialize toggles: start/stop are async, so a fast double-click could
+  // otherwise spin up a second capture and leak the first (mic stuck on).
+  micBtn.addEventListener("click", async () => {
+    if (state.micToggling) return;
+    state.micToggling = true;
+    try {
+      if (state.capturing) await stopMic();
+      else await startMic();
+    } finally {
+      state.micToggling = false;
+    }
+  });
 
   langBtn.addEventListener("click", () => {
     state.langDir = state.langDir === "en2ko" ? "ko2en" : "en2ko";
     langBtn.textContent = langLabel(state.langDir);
-    SLLM.settings.save({ ...state.settings, languageDirection: state.langDir });
     state.settings.languageDirection = state.langDir;
+    SLLM.settings.save({ ...state.settings });
+    // Live session: flip direction in place. If the socket isn't up yet the new
+    // direction rides the query string on the next connect.
+    if (state.ws && state.ws.isOpen()) state.ws.setDirection(state.langDir);
+  });
+
+  taskBtn.addEventListener("click", () => {
+    state.task = state.task === "translate" ? "transcribe" : "translate";
+    taskBtn.textContent = taskLabel(state.task);
+    state.settings.taskMode = state.task;
+    SLLM.settings.save({ ...state.settings });
+    if (state.ws && state.ws.isOpen()) state.ws.setTask(state.task);
   });
 
   optionsBtn.addEventListener("click", () => {
     SLLM.settings.openOptions(state.settings, async (saved) => {
       const sourceChanged = saved.audioSource !== state.settings.audioSource;
-      const rateChanged = saved.sampleRate !== state.settings.sampleRate;
       const serverChanged = saved.serverUrl !== state.settings.serverUrl;
       state.settings = saved;
       state.serverBase = saved.serverUrl || "";
       applyBandSettings(state.band, saved);
-      if (serverChanged) refreshHealth();
-      if (state.capturing && (sourceChanged || rateChanged)) {
-        await stopCapture();
-        await startCapture();
+      if (serverChanged) {
+        // New endpoint — reconnect only if we already held a socket.
+        const wasConnected = !!state.ws;
+        closeWs();
+        refreshHealth();
+        if (wasConnected) connectWs();
+      }
+      if (state.capturing && sourceChanged) {
+        await restartCapture();
       }
     });
   });
 
-  hyperBtn.addEventListener("click", () => SLLM.settings.openHyperparams());
+  hyperBtn.addEventListener("click", () => {
+    SLLM.settings.openHyperparams(state.settings, (saved) => {
+      state.settings = saved;
+      // Apply live without reconnect; rides the next connect otherwise.
+      if (state.ws && state.ws.isOpen()) state.ws.setOptions(saved.hyperparameters);
+    });
+  });
 
   // ---- health / tags -----------------------------------------------------
   async function refreshHealth() {
@@ -181,7 +274,8 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
 
   // ---- teardown ----------------------------------------------------------
   return async function destroy() {
-    await stopCapture();
+    await stopMic();
+    closeWs();
     safe(() => webview.stop());
     view.remove();
   };
@@ -189,6 +283,9 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   // ---- helpers -----------------------------------------------------------
   function langLabel(dir) {
     return dir === "ko2en" ? "한국어 → 영어" : "영어 → 한국어";
+  }
+  function taskLabel(t) {
+    return t === "transcribe" ? "전사" : "번역";
   }
 };
 

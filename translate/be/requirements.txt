@@ -1,9 +1,7 @@
-# --- FastAPI / serving ----------------------------------------------------
+# --- FastAPI / serving (WebSocket support comes from uvicorn[standard]) -----
 fastapi
 uvicorn[standard]
 
-# --- audio decoding for /translate ----------------------------------------
+# --- model device handling + PCM decoding -----------------------------------
 torch
-torchaudio
-torchcodec
 numpy
