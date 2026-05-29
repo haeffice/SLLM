@@ -1,9 +1,9 @@
-"""Common interface for speech-translation models served via /ws/translate.
+"""Common interface for speech-translation models served via /ws.
 
 Each concrete model lives in its own module under `models/` and implements a
 subclass of [Translator]. The class-level `model_id` is the key under which the
 registry tracks the model and the URL query value clients use to address it
-(`/ws/translate?model=<id>`).
+(`/ws?model=<id>`).
 """
 
 from __future__ import annotations

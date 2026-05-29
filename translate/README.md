@@ -8,12 +8,12 @@
 ```
 translate/
 ├── be/                         # 번역 서버 (FastAPI + uvicorn, HTTPS/WSS)
-│   ├── main.py                 #   /health(HTTP) + /ws/translate(WebSocket), lifespan 비동기 로드
+│   ├── main.py                 #   /health(HTTP) + /ws(WebSocket), lifespan 비동기 로드
 │   ├── translator.py           #   모델 레지스트리 + 장치/체크포인트 해석
 │   ├── models/
 │   │   ├── base.py             #   Translator 추상 인터페이스 (stream_step)
 │   │   └── mock.py             #   MockTranslator (실모델 교체 지점)
-│   ├── routers/ws.py           #   WS /ws/translate (로딩/실패 가드 포함)
+│   ├── routers/ws.py           #   WS /ws (로딩/실패 가드 포함)
 │   ├── preprocess.py           #   PCM16 → float32 (pcm16_to_float)
 │   ├── gen-cert.sh             #   자체서명 인증서 생성
 │   ├── run.sh                  #   체크포인트 인자 + TLS uvicorn 기동
@@ -73,7 +73,7 @@ curl -k https://localhost:9001/health
 
 (`-k`는 자체서명 인증서 검증 우회)
 
-번역은 WebSocket(`wss://<host>:9001/ws/translate?src=en&tgt=ko&task=translate`)으로
+번역은 WebSocket(`wss://<host>:9001/ws?src=en&tgt=ko&task=translate`)으로
 동작한다. 오디오는 **바이너리 프레임**으로 보내므로 `websocat`로는 컨트롤 메시지만
 확인 가능하다.
 
