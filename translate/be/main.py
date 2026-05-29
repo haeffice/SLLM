@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from translator import default_model_id, enabled_model_ids, load_one, tags_for
-from routers import translate
+from routers import ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,9 +71,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# The desktop client loads from a file:// origin, so calls to this server are
-# cross-origin: audio/wav POSTs trigger a CORS preflight and responses must
-# carry Access-Control-Allow-Origin. Allow all origins (LAN tool, no creds).
+# The desktop client loads from a file:// origin, so its cross-origin GET to
+# /health needs Access-Control-Allow-Origin. (The audio stream uses a WebSocket,
+# which is not subject to CORS.) Allow all origins (LAN tool, no creds).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -122,4 +122,4 @@ def _device_for_loaded(model) -> str | None:
     return str(dev) if dev is not None else None
 
 
-app.include_router(translate.router)
+app.include_router(ws.router)

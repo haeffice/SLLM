@@ -12,12 +12,32 @@ function defaults() {
   return {
     serverUrl: serverConfig().base, // build-injected default ("" if not baked)
     audioSource: "mic", // "mic" | "system"
-    sampleRate: 16000,
     languageDirection: "en2ko", // "en2ko" | "ko2en"
+    taskMode: "translate", // "translate" | "transcribe"
     bandTransparencyPct: 0, // 0 = opaque band, 100 = text only (see overlay-band.js)
     bandWidthPx: 720,
     recentLines: 3,
-    hyperparameters: {}, // placeholder, wired for later use
+    // AIOptions sent to the server (see renderer/settings/settings.js,
+    // HYPERPARAM_DEFAULTS — keep these two in sync).
+    hyperparameters: {
+      waitK: 0,
+      kvCache: "not",
+      maxWait: -1,
+      mode: "api",
+      firstChunkMS: 730,
+      steadyChunkMS: 730,
+      overlapMS: 90,
+      llmLeftContextMaxTokens: 1024,
+      waitPenalty: 1,
+      usePolicy: false,
+      repetitionPenalty: 1,
+      previewRepetitionPenalty: 1.08,
+      previewEveryNWaits: 8,
+      previewMaxTokens: -1,
+      previewProbDeltaThreshold: 0.81,
+      previewUsePreviousPrefix: true,
+      previewKvCache: true,
+    },
   };
 }
 

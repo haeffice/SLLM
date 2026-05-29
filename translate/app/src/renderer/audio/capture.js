@@ -1,97 +1,68 @@
-// Real-time audio capture, ported from demo/fe/app.js.
-// Captures from the mic or Windows system-audio (loopback), resamples to
-// 16 kHz mono, and flushes 720 ms WAV chunks via an onChunk callback.
+// Real-time audio capture for WebSocket streaming.
+// Captures from the mic or Windows system-audio (loopback) at 16 kHz mono,
+// converts to PCM16 via an AudioWorklet, and emits SEND_BYTES (20 ms) chunks
+// of raw PCM bytes through an onChunk(Uint8Array) callback. Small 20 ms frames
+// keep latency low; the server buffers and decides when to emit a result.
 window.SLLM = window.SLLM || {};
 
 SLLM.AudioCapture = (() => {
   const TARGET_SAMPLE_RATE = 16000;
-  const CHUNK_MS = 720;
-  const CHUNK_SAMPLES_TARGET = Math.round((TARGET_SAMPLE_RATE * CHUNK_MS) / 1000); // 11520
+  const CHUNK_MS = 20;
+  // PCM16 mono: 2 bytes/sample. 16000 * 2 * 0.02 = 640 bytes per 20 ms.
+  const SEND_BYTES = Math.round((TARGET_SAMPLE_RATE * 2 * CHUNK_MS) / 1000);
 
-  // --- ported verbatim from demo/fe/app.js -------------------------------
-  function resampleLinear(input, inputRate, outputRate) {
-    if (inputRate === outputRate) return input;
-    const ratio = inputRate / outputRate;
-    const outLen = Math.floor(input.length / ratio);
-    const out = new Float32Array(outLen);
-    for (let i = 0; i < outLen; i++) {
-      const srcIdx = i * ratio;
-      const i0 = Math.floor(srcIdx);
-      const i1 = Math.min(i0 + 1, input.length - 1);
-      const frac = srcIdx - i0;
-      out[i] = input[i0] * (1 - frac) + input[i1] * frac;
+  // The AudioWorklet processor source. Loaded via a Blob URL rather than a
+  // file path because module fetches from a file:// origin are blocked by
+  // Chromium; a same-origin blob: URL sidesteps that (CSP allows blob:).
+  const WORKLET_SRC = `
+    class PCMProcessor extends AudioWorkletProcessor {
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (ch && ch.length) {
+          const pcm = new Int16Array(ch.length);
+          for (let i = 0; i < ch.length; i++) {
+            const s = Math.max(-1, Math.min(1, ch[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          this.port.postMessage(
+            { buffer: pcm.buffer, byteLength: pcm.buffer.byteLength },
+            [pcm.buffer]
+          );
+        }
+        return true;
+      }
     }
-    return out;
-  }
-
-  function encodeWAV(samples, sampleRate) {
-    const byteLen = samples.length * 2;
-    const buffer = new ArrayBuffer(44 + byteLen);
-    const view = new DataView(buffer);
-    const writeStr = (o, s) => {
-      for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
-    };
-    writeStr(0, "RIFF");
-    view.setUint32(4, 36 + byteLen, true);
-    writeStr(8, "WAVE");
-    writeStr(12, "fmt ");
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeStr(36, "data");
-    view.setUint32(40, byteLen, true);
-    let off = 44;
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      off += 2;
-    }
-    return new Blob([buffer], { type: "audio/wav" });
-  }
-  // -----------------------------------------------------------------------
+    registerProcessor("pcm-processor", PCMProcessor);
+  `;
 
   function create(onChunk) {
     let audioCtx = null;
     let mediaStream = null;
     let sourceNode = null;
-    let processorNode = null;
+    let workletNode = null;
     let muteGain = null;
-    let frames = [];
-    let frameSamples = 0;
+    let chunks = [];
+    let bytes = 0;
 
-    function flushReadyChunks() {
-      const nativeRate = audioCtx.sampleRate;
-      const thresholdNative = Math.round((nativeRate * CHUNK_MS) / 1000);
-
-      while (frameSamples >= thresholdNative) {
-        const merged = new Float32Array(frameSamples);
+    function onWorkletMessage(e) {
+      chunks.push(new Uint8Array(e.data.buffer));
+      bytes += e.data.byteLength;
+      while (bytes >= SEND_BYTES) {
+        const merged = new Uint8Array(bytes);
         let off = 0;
-        for (const f of frames) {
-          merged.set(f, off);
-          off += f.length;
+        for (const c of chunks) {
+          merged.set(c, off);
+          off += c.length;
         }
-        const chunkNative = merged.slice(0, thresholdNative);
-        const tail = merged.slice(thresholdNative);
-        frames = tail.length > 0 ? [tail] : [];
-        frameSamples = tail.length;
-
-        // System-audio mix is typically 44.1/48 kHz, so always resample from
-        // the actual context rate — never assume it is already 16 kHz.
-        const chunk16k = resampleLinear(chunkNative, nativeRate, TARGET_SAMPLE_RATE);
-        const fixed =
-          chunk16k.length === CHUNK_SAMPLES_TARGET
-            ? chunk16k
-            : chunk16k.subarray(0, Math.min(chunk16k.length, CHUNK_SAMPLES_TARGET));
-
-        onChunk(encodeWAV(fixed, TARGET_SAMPLE_RATE));
+        const send = merged.slice(0, SEND_BYTES);
+        const rest = merged.slice(SEND_BYTES);
+        chunks = rest.length > 0 ? [rest] : [];
+        bytes = rest.length;
+        onChunk(send);
       }
     }
 
-    async function getStream(source, sampleRate) {
+    async function getStream(source) {
       if (source === "system") {
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
@@ -106,37 +77,55 @@ SLLM.AudioCapture = (() => {
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: sampleRate || TARGET_SAMPLE_RATE,
+          sampleRate: TARGET_SAMPLE_RATE,
         },
       });
     }
 
-    async function start(source, sampleRate) {
-      mediaStream = await getStream(source, sampleRate);
+    async function start(source) {
+      mediaStream = await getStream(source);
 
       const Ctx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctx({ sampleRate: sampleRate || TARGET_SAMPLE_RATE });
+      audioCtx = new Ctx({ sampleRate: TARGET_SAMPLE_RATE });
       if (audioCtx.state === "suspended") await audioCtx.resume();
 
-      sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-      processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorNode.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
-        frames.push(new Float32Array(input));
-        frameSamples += input.length;
-        flushReadyChunks();
-      };
+      const blobUrl = URL.createObjectURL(
+        new Blob([WORKLET_SRC], { type: "application/javascript" })
+      );
+      try {
+        await audioCtx.audioWorklet.addModule(blobUrl);
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
 
+      sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+      // Force a single (down-mixed) input channel so stereo sources (system
+      // loopback) collapse to mono before reaching the processor.
+      workletNode = new AudioWorkletNode(audioCtx, "pcm-processor", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: "explicit",
+        channelInterpretation: "speakers",
+      });
+      workletNode.port.onmessage = onWorkletMessage;
+
+      // Route through a muted gain to the destination so the graph is pulled
+      // (process() runs) without the captured audio being audible.
       muteGain = audioCtx.createGain();
       muteGain.gain.value = 0;
-      sourceNode.connect(processorNode);
-      processorNode.connect(muteGain);
+      sourceNode.connect(workletNode);
+      workletNode.connect(muteGain);
       muteGain.connect(audioCtx.destination);
     }
 
     async function stop() {
       try {
-        if (processorNode) processorNode.disconnect();
+        if (workletNode) {
+          workletNode.port.onmessage = null;
+          workletNode.disconnect();
+        }
         if (muteGain) muteGain.disconnect();
         if (sourceNode) sourceNode.disconnect();
         if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
@@ -145,10 +134,10 @@ SLLM.AudioCapture = (() => {
       audioCtx = null;
       mediaStream = null;
       sourceNode = null;
-      processorNode = null;
+      workletNode = null;
       muteGain = null;
-      frames = [];
-      frameSamples = 0;
+      chunks = [];
+      bytes = 0;
     }
 
     return { start, stop };

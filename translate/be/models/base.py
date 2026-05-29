@@ -1,9 +1,9 @@
-"""Common interface for speech-translation models served via /translate.
+"""Common interface for speech-translation models served via /ws/translate.
 
 Each concrete model lives in its own module under `models/` and implements a
 subclass of [Translator]. The class-level `model_id` is the key under which the
 registry tracks the model and the URL query value clients use to address it
-(`POST /translate?model=<id>`).
+(`/ws/translate?model=<id>`).
 """
 
 from __future__ import annotations
@@ -29,12 +29,24 @@ class Translator(ABC):
         """Load the checkpoint and return an instance ready for translation."""
 
     @abstractmethod
-    def translate(self, wav_bytes: bytes, src: str, tgt: str) -> dict:
-        """Translate one WAV chunk from `src` language to `tgt` language.
+    def stream_step(
+        self, pcm: bytes, src: str, tgt: str, task: str, state: dict
+    ) -> dict | None:
+        """Feed one PCM chunk of a live stream and optionally emit an update.
 
-        The implementation should return a dict containing at least:
+        `pcm` is raw little-endian PCM16, mono, 16 kHz — the client's wire
+        format (see translate/app/src/renderer/audio/capture.js).
+        `task` is ``"translate"`` (src→tgt) or ``"transcribe"`` (verbatim src).
+        `src`/`tgt`/`task` reflect the live session and may change between calls
+        (the client switches them in place; see routers/ws.py).
+        `state` is a per-connection dict the implementation may use to carry
+        accumulated audio / decoding context across calls within one WebSocket;
+        it is cleared on a direction/task switch or mic-off.
 
-            - "text":     str — the translated text for this chunk
-            - "model_id": str
-        And ideally any metadata the model produces (sample_rate, duration, …).
+        Returns a dict with at least:
+
+            - "confirmed":  str — finalized translation so far (rendered black)
+            - "prediction": str — current tentative tail (rendered gray)
+
+        or None when there is nothing new to emit for this chunk.
         """

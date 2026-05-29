@@ -1,8 +1,8 @@
-"""Mock translator — the swap point for a real speech-translation LLM.
+"""Mock translator — the swap point for a real streaming speech-translation LLM.
 
-Replace the body of `translate()` (and `load()` if your model needs weights)
-with a real Speech-LLM. The signatures and the returned dict's `"text"` field
-are the fixed contract the client depends on.
+Replace the body of `stream_step()` (and `load()` if your model needs weights)
+with a real Speech-LLM. The signature and the returned dict's "confirmed" /
+"prediction" fields are the fixed contract the client renders (black / gray).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 import torch
 
 from models.base import Translator
-from preprocess import decode_wav
+from preprocess import TARGET_SAMPLE_RATE, pcm16_to_float
 
 log = logging.getLogger("be.mock")
 
@@ -28,14 +28,19 @@ class MockTranslator(Translator):
             log.info("mock translator: ckpt_path=%s (ignored by mock)", ckpt_path)
         return cls(device)
 
-    def translate(self, wav_bytes: bytes, src: str, tgt: str) -> dict:
-        waveform, sample_rate = decode_wav(wav_bytes)
-        num_samples = int(waveform.shape[-1])
-        duration = num_samples / sample_rate
-        return {
-            "text": f"[{src}->{tgt}] mock translation ({duration:.2f}s)",
-            "model_id": self.model_id,
-            "sample_rate": sample_rate,
-            "num_samples": num_samples,
-            "duration_seconds": round(duration, 3),
-        }
+    def stream_step(
+        self, pcm: bytes, src: str, tgt: str, task: str, state: dict
+    ) -> dict | None:
+        # Accumulate streamed audio length; emit a fake confirmed/prediction.
+        samples = pcm16_to_float(pcm)
+        state["samples"] = state.get("samples", 0) + len(samples)
+        secs = state["samples"] / TARGET_SAMPLE_RATE
+
+        # Mock policy: "confirm" ~one token per elapsed second (cumulative),
+        # and report the running duration as the tentative prediction. The tag
+        # reflects the task — transcription stays in the source language.
+        n = int(secs)
+        tag = f"[{src}]" if task == "transcribe" else f"[{src}->{tgt}]"
+        confirmed = " ".join(f"{tag}#{i + 1}" for i in range(n))
+        prediction = f"…{secs:.1f}s"
+        return {"confirmed": confirmed, "prediction": prediction}

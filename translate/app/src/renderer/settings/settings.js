@@ -3,6 +3,51 @@
 window.SLLM = window.SLLM || {};
 
 SLLM.settings = (() => {
+  // Canonical AIOptions defaults. Mirrors settings-store.js (main process); kept
+  // here too so the dialog and the `safe` fill work even if a stored settings
+  // file predates a field (load()'s shallow merge can leave it missing).
+  const HYPERPARAM_DEFAULTS = {
+    waitK: 0,
+    kvCache: "not",
+    maxWait: -1,
+    mode: "api",
+    firstChunkMS: 730,
+    steadyChunkMS: 730,
+    overlapMS: 90,
+    llmLeftContextMaxTokens: 1024,
+    waitPenalty: 1,
+    usePolicy: false,
+    repetitionPenalty: 1,
+    previewRepetitionPenalty: 1.08,
+    previewEveryNWaits: 8,
+    previewMaxTokens: -1,
+    previewProbDeltaThreshold: 0.81,
+    previewUsePreviousPrefix: true,
+    previewKvCache: true,
+  };
+
+  // Field specs drive the dialog layout. types: int | float | select | toggle.
+  // A toggle maps the checkbox to its on/off values (boolean, or 'use'/'not').
+  const HYPERPARAMS = [
+    { key: "waitK", type: "int" },
+    { key: "kvCache", type: "toggle", on: "use", off: "not" },
+    { key: "maxWait", type: "int" },
+    { key: "mode", type: "select", options: ["api", "local"] },
+    { key: "firstChunkMS", type: "int" },
+    { key: "steadyChunkMS", type: "int" },
+    { key: "overlapMS", type: "int" },
+    { key: "llmLeftContextMaxTokens", type: "int" },
+    { key: "waitPenalty", type: "float" },
+    { key: "usePolicy", type: "toggle", on: true, off: false },
+    { key: "repetitionPenalty", type: "float" },
+    { key: "previewRepetitionPenalty", type: "float" },
+    { key: "previewEveryNWaits", type: "int" },
+    { key: "previewMaxTokens", type: "int" },
+    { key: "previewProbDeltaThreshold", type: "float" },
+    { key: "previewUsePreviousPrefix", type: "toggle", on: true, off: false },
+    { key: "previewKvCache", type: "toggle", on: true, off: false },
+  ];
+
   async function load() {
     return window.api.loadSettings();
   }
@@ -18,6 +63,16 @@ SLLM.settings = (() => {
     span.textContent = labelText;
     wrap.appendChild(span);
     wrap.appendChild(inputEl);
+    return wrap;
+  }
+
+  // A toggle/select field lays the label and control out on one row.
+  function buildRowField(labelText, inputEl) {
+    const wrap = document.createElement("label");
+    wrap.className = "field field-row";
+    const span = document.createElement("span");
+    span.textContent = labelText;
+    wrap.append(span, inputEl);
     return wrap;
   }
 
@@ -85,14 +140,12 @@ SLLM.settings = (() => {
       audioSource.appendChild(o);
     }
 
-    const sampleRate = numberInput(current.sampleRate, 8000, 48000);
     const transparency = numberInput(current.bandTransparencyPct, 0, 100);
     const width = numberInput(current.bandWidthPx, 100, 4000);
     const recent = numberInput(current.recentLines, 1, 20);
 
     content.appendChild(buildField("서버 URL", serverUrl));
     content.appendChild(buildField("오디오 소스", audioSource));
-    content.appendChild(buildField("샘플레이트 (Hz)", sampleRate));
     content.appendChild(buildField("투명도 (0=가림, 100=글씨만)", transparency));
     content.appendChild(buildField("표시 너비 (px)", width));
     content.appendChild(buildField("최근 줄 수", recent));
@@ -102,7 +155,6 @@ SLLM.settings = (() => {
         ...current,
         serverUrl: serverUrl.value.trim(),
         audioSource: audioSource.value,
-        sampleRate: parseInt(sampleRate.value, 10) || current.sampleRate,
         bandTransparencyPct: clamp(parseInt(transparency.value, 10), 0, 100),
         bandWidthPx: Math.max(100, parseInt(width.value, 10) || current.bandWidthPx),
         recentLines: Math.max(1, parseInt(recent.value, 10) || current.recentLines),
@@ -112,14 +164,61 @@ SLLM.settings = (() => {
     });
   }
 
-  // Hyperparameters: placeholder (wired for later use, per spec).
-  function openHyperparams() {
+  // Hyperparameters (AIOptions): one field per spec, persisted under
+  // settings.hyperparameters. onApply receives the saved settings so the caller
+  // can push the new options to the server (see translate-view.js).
+  function openHyperparams(current, onApply) {
     const content = document.createElement("div");
     content.className = "dialog-body";
-    const note = document.createElement("p");
-    note.textContent = "하이퍼파라미터 설정은 추후 제공됩니다.";
-    content.appendChild(note);
-    openDialog("하이퍼파라미터", content, async () => true);
+    const hp = { ...HYPERPARAM_DEFAULTS, ...(current.hyperparameters || {}) };
+    const inputs = {};
+
+    for (const spec of HYPERPARAMS) {
+      const val = hp[spec.key];
+      let inputEl;
+      if (spec.type === "toggle") {
+        inputEl = document.createElement("input");
+        inputEl.type = "checkbox";
+        inputEl.checked = val === spec.on;
+        content.appendChild(buildRowField(spec.key, inputEl));
+      } else if (spec.type === "select") {
+        inputEl = document.createElement("select");
+        for (const opt of spec.options) {
+          const o = document.createElement("option");
+          o.value = opt;
+          o.textContent = opt;
+          if (val === opt) o.selected = true;
+          inputEl.appendChild(o);
+        }
+        content.appendChild(buildRowField(spec.key, inputEl));
+      } else {
+        inputEl = document.createElement("input");
+        inputEl.type = "number";
+        inputEl.step = spec.type === "float" ? "any" : "1";
+        inputEl.value = String(val);
+        content.appendChild(buildField(spec.key, inputEl));
+      }
+      inputs[spec.key] = inputEl;
+    }
+
+    openDialog("하이퍼파라미터", content, async () => {
+      const next = {};
+      for (const spec of HYPERPARAMS) {
+        const el = inputs[spec.key];
+        let v;
+        if (spec.type === "toggle") v = el.checked ? spec.on : spec.off;
+        else if (spec.type === "select") v = el.value;
+        else if (spec.type === "float") v = parseFloat(el.value);
+        else v = parseInt(el.value, 10);
+        // `safe`: fall back to the default on empty/NaN input.
+        if (v == null || (typeof v === "number" && Number.isNaN(v))) {
+          v = HYPERPARAM_DEFAULTS[spec.key];
+        }
+        next[spec.key] = v;
+      }
+      const saved = await save({ ...current, hyperparameters: next });
+      onApply(saved);
+    });
   }
 
   function clamp(v, lo, hi) {
