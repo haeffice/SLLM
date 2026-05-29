@@ -7,7 +7,7 @@ window.SLLM = window.SLLM || {};
 
 SLLM.AudioCapture = (() => {
   const TARGET_SAMPLE_RATE = 16000;
-  const CHUNK_MS = 20;
+  const CHUNK_MS = 80;
   // PCM16 mono: 2 bytes/sample. 16000 * 2 * 0.02 = 640 bytes per 20 ms.
   const SEND_BYTES = Math.round((TARGET_SAMPLE_RATE * 2 * CHUNK_MS) / 1000);
 
