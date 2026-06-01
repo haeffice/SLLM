@@ -40,7 +40,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           # Lockfile lives in the subdir; setup-node resolves this from the repo
           # root (GITHUB_WORKSPACE), not working-directory — so it must be explicit.
           cache: "npm"
