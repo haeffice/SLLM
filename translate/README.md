@@ -208,27 +208,24 @@ dict(누적 오디오/디코딩 컨텍스트 보관용; 방향/task 전환·mico
 ## 6. DRM (Widevine) 지원
 
 임베디드 `<webview>`에서 DRM/EME 보호 콘텐츠(예: 보호된 스트리밍)를 재생하려면
-**Widevine CDM**이 필요하다. 메인 프로세스(`src/main/main.js`)는 앱 시작 시
-`components`(Widevine) 초기화를 시도하며, 이 API는 **Widevine 지원 Electron
-빌드에서만** 존재한다. 일반 Electron에서는 자동으로 건너뛰어(no-op) DRM 없이 그대로
-실행된다(로그: `Widevine: components API unavailable`).
+**Widevine CDM**이 필요하다. 이를 위해 Electron 의존성은 **castlabs의 Widevine 포함
+빌드**로 고정되어 있다(vanilla Electron과 동일 버전 + Widevine, drop-in):
 
-실제 DRM 재생을 활성화하려면:
+```jsonc
+// app/package.json
+"electron": "github:castlabs/electron-releases#v31.7.7+wvcus"
+```
 
-1. Electron 의존성을 castlabs의 Widevine 포함 빌드로 교체(현재 메이저 v31에 맞는
-   태그 사용). 예:
+- `npm install` 시 castlabs의 Widevine 포함 Electron 바이너리가 설치된다.
+- 메인 프로세스(`src/main/main.js`)의 `initWidevine()`가 시작 시 `components`
+  (Widevine CDM)를 초기화한다. 시작 로그에 `Widevine: ready`가 보이면 활성화 완료.
+- `components` API가 없는 환경(예: vanilla Electron으로 교체한 경우)에서는 자동으로
+  건너뛰어(no-op) DRM 없이 그대로 실행된다(로그: `Widevine: components API unavailable`).
+- **배포(설치 파일) 시에는 castlabs EVS 계정으로 VMP 서명**이 추가로 필요하다
+  (개발 실행 `npm start`에는 불필요). 자세한 절차는 castlabs/electron-releases 문서 참고.
 
-   ```bash
-   npm install --save-dev "github:castlabs/electron-releases#v31.<patch>+wvcus"
-   ```
-
-2. `npm start` / `npm run build:win`은 그대로 사용. 시작 로그에 `Widevine: ready`가
-   보이면 CDM 활성화 완료.
-3. **배포(설치 파일) 시에는 castlabs EVS 계정으로 VMP 서명**이 추가로 필요하다
-   (개발 실행에는 불필요). 자세한 절차는 castlabs/electron-releases 문서 참고.
-
-> 코드(`initWidevine`)는 이미 DRM-ready 상태이므로, 위 1번처럼 의존성만 교체하면
-> 동작한다. 기본 의존성은 CI 빌드 호환을 위해 일반 Electron으로 유지한다.
+> Electron 버전을 올릴 때는 castlabs에서 해당 메이저의 `vXX.Y.Z+wvcus` 태그가
+> 존재하는지 확인하고 그 태그로 핀해야 한다.
 
 ---
 
