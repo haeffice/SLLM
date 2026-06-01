@@ -19,6 +19,16 @@ on:
       - "translate/**"
       - ".github/workflows/build-windows.yml"
 
+# Least privilege: the job only reads the repo and uploads an artifact (which
+# uses the Actions runtime token, not these scopes).
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an in-flight build.
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -26,14 +36,18 @@ jobs:
       run:
         working-directory: translate/app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
+          # Lockfile lives in the subdir; setup-node resolves this from the repo
+          # root (GITHUB_WORKSPACE), not working-directory — so it must be explicit.
+          cache: "npm"
+          cache-dependency-path: translate/app/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build NSIS installer
         env:
@@ -42,7 +56,7 @@ jobs:
         run: npm run build:win
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sllm-translate-windows
           path: translate/app/dist/*.exe
