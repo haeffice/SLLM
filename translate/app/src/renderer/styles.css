@@ -127,11 +127,16 @@ body {
   color: #fff;
   border-color: #2383e2;
 }
-/* Gear icon button (옵션) */
+/* Gear icon button (옵션) — inline SVG centered in the button. */
 .ctrl-btn.gear {
-  font-size: 16px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 8px;
+}
+.ctrl-btn.gear svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Sliding toggle switch (language direction / task). Always a blue-bordered
@@ -147,6 +152,14 @@ body {
   border-radius: 999px;
   background: #fff;
   cursor: pointer;
+}
+/* Direction toggle (EN→KO/KO→EN) sits a bit wider; task toggle (번역/전사) a bit
+   narrower — same combined width as two default 88px pills. */
+.toggle-switch.lang {
+  width: 100px;
+}
+.toggle-switch.task {
+  width: 76px;
 }
 .toggle-knob {
   position: absolute;
@@ -233,43 +246,140 @@ body {
 }
 .overlay-band {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   z-index: 10;
-  pointer-events: none; /* container passes clicks through to the browser */
-  padding: 12px 16px;
-  display: flex;
-  justify-content: center;
+  pointer-events: none; /* empty areas pass clicks through to the browser */
 }
 .overlay-panel {
-  --band-width: 720px;
-  width: 100%;
-  max-width: var(--band-width);
-  height: 384px; /* set inline by overlay-band.js (user-resizable) */
+  position: absolute;
   display: flex;
   flex-direction: column;
-  pointer-events: auto; /* the panel is interactive: scroll + resize */
+  pointer-events: auto; /* the panel is interactive: scroll + drag/resize */
   /* alpha set inline by overlay-band.js; default opaque (transparency 0%) */
   background: rgba(233, 236, 239, var(--band-alpha, 1)); /* #e9ecef */
   border: 1px solid #000;
   border-radius: 8px;
   overflow: hidden;
 }
-.overlay-resizer {
+/* Default: docked across the full bottom of the stage (height set inline). */
+.overlay-panel.mode-default {
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+}
+/* Drag: free-floating; left/top/width/height set inline by overlay-band.js. */
+
+/* Top strip: vertical-resize (default) / move (drag) handle + action button. */
+/* position:relative WITHOUT z-index → not a stacking context, so the action
+   button's z-index can sit above the resize handles (below) while the rest of
+   the header stays beneath the top-edge handle. */
+.overlay-header {
+  position: relative;
   flex: 0 0 auto;
-  height: 14px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+}
+.overlay-panel.mode-default .overlay-header {
   cursor: ns-resize;
+}
+.overlay-panel.mode-drag .overlay-header {
+  cursor: move;
+}
+/* Mode toggle: pop-out (→ drag) / close (→ docked). position+z-index keeps it
+   clickable above the resize handles (z-index:5). */
+.overlay-action {
+  position: relative;
+  z-index: 6;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #1f2328;
+  cursor: pointer;
 }
-.overlay-resizer::before {
-  content: "";
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(0, 0, 0, 0.25);
+.overlay-action:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+.overlay-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Edge/corner resize handles — only active in drag mode (kept inside the
+   panel's overflow:hidden box, so a few px in from each edge). */
+.overlay-handles {
+  display: none;
+}
+.overlay-panel.mode-drag .overlay-handles {
+  display: block;
+}
+.overlay-handle {
+  position: absolute;
+  z-index: 5;
+}
+.overlay-handle.h-n {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.overlay-handle.h-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.overlay-handle.h-e {
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.overlay-handle.h-w {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.overlay-handle.h-ne {
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.overlay-handle.h-nw {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+.overlay-handle.h-se {
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+.overlay-handle.h-sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
 }
 .overlay-scroll {
   --band-line-height: 1.6em;

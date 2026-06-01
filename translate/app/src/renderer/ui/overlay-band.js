@@ -1,7 +1,15 @@
-// Bottom translation panel over the embedded browser: a bordered, resizable box
+// Translation panel over the embedded browser: a bordered, resizable box
 // (#e9ecef bg) that scrolls through subtitle history. The most recent lines are
 // fully opaque; older lines fade out upward (a CSS mask) and stay reachable by
 // scrolling. The scrollbar is hidden.
+//
+// Two modes (toggled by the top-right action button):
+//   - default: docked across the full bottom of the stage (left/right/bottom
+//     margins). Drag the top header to resize height (grows upward). The
+//     pop-out icon switches to drag mode.
+//   - drag: a free-floating panel. Drag the header to move it; the eight edge/
+//     corner handles resize it. It is clamped fully inside the stage. The ✕ icon
+//     switches back to default mode.
 //
 // Rendering is a typewriter: the BE streams `confirmed`/`prediction` as the
 // current FULL strings, both growing by prefix-extension (e.g. prediction
@@ -16,6 +24,17 @@ SLLM.overlayBand = (() => {
   const TICK_MS = 18; // ~55 chars/sec at one char per tick
   const LINE_PX = 32; // 20px font × 1.6 line-height — used to size the solid zone
   const MIN_H = 48;
+  const MIN_W = 200;
+  const MARGIN = 16; // docked gap to the stage edges (left/right/bottom)
+
+  // Pop-out (default → drag) and close (drag → default) glyphs. stroke uses
+  // currentColor so they inherit the button's text color.
+  const ICON_POPOUT =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5.5"/></svg>';
+  const ICON_CLOSE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+  const HANDLE_DIRS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 
   function el(tag, className) {
     const e = document.createElement(tag);
@@ -23,12 +42,32 @@ SLLM.overlayBand = (() => {
     return e;
   }
 
-  // opts.onHeightChange(px) fires when the user finishes a resize drag.
+  function clamp(v, lo, hi) {
+    return Math.min(hi, Math.max(lo, v));
+  }
+
+  // opts.onHeightChange(px) fires when the user finishes a docked resize drag.
   function create(hostEl, opts) {
     opts = opts || {};
-    const panel = el("div", "overlay-panel");
-    const resizer = el("div", "overlay-resizer");
-    resizer.title = "드래그하여 자막 높이 조절";
+    const panel = el("div", "overlay-panel mode-default");
+
+    // Resize handles — visible/active only in drag mode (CSS hides them docked).
+    const handlesWrap = el("div", "overlay-handles");
+    for (const dir of HANDLE_DIRS) {
+      const h = el("div", `overlay-handle h-${dir}`);
+      h.dataset.dir = dir;
+      handlesWrap.appendChild(h);
+    }
+
+    // Top strip: vertical resize handle (default) / move handle (drag), with the
+    // mode-toggle action button on the right.
+    const header = el("div", "overlay-header");
+    const actionBtn = el("button", "overlay-action");
+    actionBtn.type = "button";
+    actionBtn.innerHTML = ICON_POPOUT;
+    actionBtn.title = "새 창처럼 띄우기";
+    header.appendChild(actionBtn);
+
     const scroll = el("div", "overlay-scroll");
     const textEl = el("div", "overlay-text");
     const confirmedEl = el("span", "overlay-confirmed");
@@ -38,7 +77,7 @@ SLLM.overlayBand = (() => {
     caretEl.style.display = "none"; // shown only while typing (see render)
     textEl.append(confirmedEl, predictionEl, caretEl);
     scroll.appendChild(textEl);
-    panel.append(resizer, scroll);
+    panel.append(handlesWrap, header, scroll);
     hostEl.appendChild(panel);
 
     // target* = what the BE wants displayed; shown* = what's typed so far.
@@ -48,15 +87,47 @@ SLLM.overlayBand = (() => {
     let shownP = "";
     let timer = null;
 
+    // ---- layout state ----------------------------------------------------
+    let mode = "default";
+    let heightPx = MIN_H; // docked height (persisted via onHeightChange)
+    // Floating geometry in stage coords; seeded from the docked rect on pop-out.
+    let rect = { left: MARGIN, top: MARGIN, width: 320, height: MIN_H };
+
+    function stageEl() {
+      return hostEl.parentElement; // .browser-stage (hostEl is inset:0 within it)
+    }
+    function stageSize() {
+      const s = stageEl();
+      // Fall back to the window when the stage is missing or momentarily
+      // zero-sized (e.g. hidden/minimized) so geometry never collapses to 0.
+      if (s && s.clientWidth > 0 && s.clientHeight > 0) {
+        return { w: s.clientWidth, h: s.clientHeight };
+      }
+      return { w: window.innerWidth, h: window.innerHeight };
+    }
+
+    function applyRect() {
+      panel.style.left = `${rect.left}px`;
+      panel.style.top = `${rect.top}px`;
+      panel.style.width = `${rect.width}px`;
+      panel.style.height = `${rect.height}px`;
+    }
+
+    // Pull the floating rect back fully inside the stage (used on pop-out seed
+    // and on window resize).
+    function clampRectIntoStage() {
+      const { w, h } = stageSize();
+      rect.width = clamp(rect.width, MIN_W, w);
+      rect.height = clamp(rect.height, MIN_H, h);
+      rect.left = clamp(rect.left, 0, w - rect.width);
+      rect.top = clamp(rect.top, 0, h - rect.height);
+    }
+
     function setAlphaPct(pct) {
       // Spec: 0% = background fully covers content, 100% = text only (no bg).
       // So CSS alpha is the INVERSE of the option value. Do not "simplify".
       const alpha = 1 - Math.min(100, Math.max(0, pct)) / 100;
       panel.style.setProperty("--band-alpha", String(alpha));
-    }
-
-    function setWidth(px) {
-      panel.style.setProperty("--band-width", `${px}px`);
     }
 
     // How many recent lines stay fully opaque before the older-lines fade.
@@ -66,8 +137,8 @@ SLLM.overlayBand = (() => {
     }
 
     function setHeight(px) {
-      const h = Math.max(MIN_H, px || MIN_H);
-      panel.style.height = `${h}px`;
+      heightPx = Math.max(MIN_H, px || MIN_H);
+      if (mode === "default") panel.style.height = `${heightPx}px`;
     }
 
     function render() {
@@ -138,27 +209,140 @@ SLLM.overlayBand = (() => {
       render();
     }
 
-    // ---- resize (drag the top handle; grows upward) ----------------------
-    resizer.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      const startY = e.clientY;
-      const startH = panel.offsetHeight;
-      const stage = hostEl.parentElement;
-      const maxH = (stage ? stage.clientHeight : window.innerHeight) - 16;
-      const onMove = (ev) => {
-        const h = Math.max(MIN_H, Math.min(maxH, startH + (startY - ev.clientY)));
-        panel.style.height = `${h}px`;
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        if (opts.onHeightChange) opts.onHeightChange(panel.offsetHeight);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
+    // ---- mode switching --------------------------------------------------
+    function enterDrag() {
+      // Seed the floating rect from the panel's current on-screen position so it
+      // lifts off exactly where it was docked.
+      const s = stageEl();
+      if (s) {
+        const pr = panel.getBoundingClientRect();
+        const sr = s.getBoundingClientRect();
+        rect = {
+          left: pr.left - sr.left,
+          top: pr.top - sr.top,
+          width: pr.width,
+          height: pr.height,
+        };
+      }
+      clampRectIntoStage();
+      mode = "drag";
+      panel.classList.remove("mode-default");
+      panel.classList.add("mode-drag");
+      applyRect();
+      actionBtn.innerHTML = ICON_CLOSE;
+      actionBtn.title = "하단에 도킹";
+    }
+
+    function exitDrag() {
+      mode = "default";
+      panel.classList.remove("mode-drag");
+      panel.classList.add("mode-default");
+      // Hand width/position back to the CSS class; keep the persisted height.
+      panel.style.left = "";
+      panel.style.top = "";
+      panel.style.width = "";
+      panel.style.right = "";
+      panel.style.bottom = "";
+      panel.style.height = `${heightPx}px`;
+      actionBtn.innerHTML = ICON_POPOUT;
+      actionBtn.title = "새 창처럼 띄우기";
+    }
+
+    actionBtn.addEventListener("click", () => {
+      if (mode === "default") enterDrag();
+      else exitDrag();
     });
 
-    return { setAlphaPct, setWidth, setRecentLines, setHeight, update, clear };
+    // Pointer-capture drag: moves keep arriving on captureEl even when the
+    // cursor crosses the embedded <webview> (which would otherwise swallow
+    // them). onDone runs once on pointerup/cancel.
+    function beginDrag(captureEl, e0, onMove, onDone) {
+      try { captureEl.setPointerCapture(e0.pointerId); } catch (_) {}
+      const move = (ev) => onMove(ev);
+      const end = (ev) => {
+        captureEl.removeEventListener("pointermove", move);
+        captureEl.removeEventListener("pointerup", end);
+        captureEl.removeEventListener("pointercancel", end);
+        try { captureEl.releasePointerCapture(e0.pointerId); } catch (_) {}
+        if (onDone) onDone();
+      };
+      captureEl.addEventListener("pointermove", move);
+      captureEl.addEventListener("pointerup", end);
+      captureEl.addEventListener("pointercancel", end);
+    }
+
+    // ---- header drag: resize height (default) / move panel (drag) ---------
+    header.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".overlay-action")) return; // let the button click
+      e.preventDefault();
+      if (mode === "default") {
+        const startY = e.clientY;
+        const startH = panel.offsetHeight; // border-box → equals the CSS height
+        const maxH = stageSize().h - 2 * MARGIN;
+        beginDrag(
+          header,
+          e,
+          (ev) => {
+            heightPx = clamp(startH + (startY - ev.clientY), MIN_H, maxH);
+            panel.style.height = `${heightPx}px`;
+          },
+          () => opts.onHeightChange && opts.onHeightChange(heightPx)
+        );
+      } else {
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startL = rect.left;
+        const startT = rect.top;
+        beginDrag(header, e, (ev) => {
+          rect.left = startL + (ev.clientX - startX);
+          rect.top = startT + (ev.clientY - startY);
+          clampRectIntoStage(); // keeps the panel fully on-screen (any stage size)
+          applyRect();
+        });
+      }
+    });
+
+    // ---- edge/corner resize (drag mode) ----------------------------------
+    handlesWrap.addEventListener("pointerdown", (e) => {
+      const handle = e.target.closest(".overlay-handle");
+      if (!handle) return;
+      e.preventDefault();
+      const dir = handle.dataset.dir;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const s = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      const right = s.left + s.width;
+      const bottom = s.top + s.height;
+      beginDrag(handlesWrap, e, (ev) => {
+        const { w, h } = stageSize();
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        // Anchor the opposite edge so resizing never jitters at the limits.
+        let L = s.left, T = s.top, R = right, B = bottom;
+        if (dir.includes("e")) R = clamp(right + dx, s.left + MIN_W, w);
+        if (dir.includes("w")) L = clamp(s.left + dx, 0, right - MIN_W);
+        if (dir.includes("s")) B = clamp(bottom + dy, s.top + MIN_H, h);
+        if (dir.includes("n")) T = clamp(s.top + dy, 0, bottom - MIN_H);
+        rect = { left: L, top: T, width: R - L, height: B - T };
+        clampRectIntoStage(); // normalize (no-op for normal stages; guards tiny ones)
+        applyRect();
+      });
+    });
+
+    // Keep a floating panel inside the stage when the window/stage shrinks.
+    const onWinResize = () => {
+      if (mode !== "drag") return;
+      clampRectIntoStage();
+      applyRect();
+    };
+    window.addEventListener("resize", onWinResize);
+
+    function destroy() {
+      stop();
+      window.removeEventListener("resize", onWinResize);
+    }
+
+    return { setAlphaPct, setRecentLines, setHeight, update, clear, destroy };
   }
 
   return { create };
