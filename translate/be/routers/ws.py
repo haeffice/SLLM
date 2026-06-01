@@ -28,7 +28,7 @@ def _reset_decode(session: dict) -> None:
     session.update(src=src, tgt=tgt, task=task)
 
 
-@router.websocket("/ws/translate")
+@router.websocket("/ws")
 async def ws_translate(
     websocket: WebSocket,
     model: str | None = Query(default=None, description="model id; defaults to server default"),

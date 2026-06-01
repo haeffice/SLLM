@@ -1,14 +1,14 @@
 // Real-time audio capture for WebSocket streaming.
 // Captures from the mic or Windows system-audio (loopback) at 16 kHz mono,
-// converts to PCM16 via an AudioWorklet, and emits SEND_BYTES (20 ms) chunks
-// of raw PCM bytes through an onChunk(Uint8Array) callback. Small 20 ms frames
-// keep latency low; the server buffers and decides when to emit a result.
+// converts to PCM16 via an AudioWorklet, and emits SEND_BYTES (80 ms) chunks
+// of raw PCM bytes through an onChunk(Uint8Array) callback. Short frames keep
+// latency low; the server buffers and decides when to emit a result.
 window.SLLM = window.SLLM || {};
 
 SLLM.AudioCapture = (() => {
   const TARGET_SAMPLE_RATE = 16000;
-  const CHUNK_MS = 20;
-  // PCM16 mono: 2 bytes/sample. 16000 * 2 * 0.02 = 640 bytes per 20 ms.
+  const CHUNK_MS = 80;
+  // PCM16 mono: 2 bytes/sample. 16000 * 2 * 0.08 = 2560 bytes per 80 ms.
   const SEND_BYTES = Math.round((TARGET_SAMPLE_RATE * 2 * CHUNK_MS) / 1000);
 
   // The AudioWorklet processor source. Loaded via a Blob URL rather than a

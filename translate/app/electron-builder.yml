@@ -1,5 +1,11 @@
 appId: com.sllm.translate
 productName: SLLM Translate
+# Package the locally-installed castlabs Widevine Electron (node_modules/electron/dist)
+# instead of downloading from the public electron mirror, which has no "+wvcus"
+# build (that URL 404s). electronVersion drops the build-metadata suffix.
+# NOTE: build on the target OS (Windows) — the local dist is the host platform's.
+electronDist: node_modules/electron/dist
+electronVersion: 31.7.7
 directories:
   output: dist
 files:

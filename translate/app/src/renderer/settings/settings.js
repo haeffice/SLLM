@@ -201,7 +201,7 @@ SLLM.settings = (() => {
       inputs[spec.key] = inputEl;
     }
 
-    openDialog("하이퍼파라미터", content, async () => {
+    openDialog("파라미터", content, async () => {
       const next = {};
       for (const spec of HYPERPARAMS) {
         const el = inputs[spec.key];

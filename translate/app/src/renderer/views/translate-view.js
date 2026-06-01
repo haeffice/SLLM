@@ -33,12 +33,26 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
 
   const controls = el("div", "controls");
   const micBtn = button("마이크 켜기", "ctrl-btn");
-  const langBtn = button(langLabel(state.langDir), "ctrl-btn");
-  const taskBtn = button(taskLabel(state.task), "ctrl-btn");
-  const optionsBtn = button("옵션", "ctrl-btn");
-  const hyperBtn = button("하이퍼파라미터", "ctrl-btn");
+  // Direction toggle: knob left = EN→KO (en2ko), knob right = KO→EN (ko2en).
+  const langToggle = toggleSwitch("EN→KO", "KO→EN", state.langDir === "ko2en", (isRight) => {
+    state.langDir = isRight ? "ko2en" : "en2ko";
+    state.settings.languageDirection = state.langDir;
+    SLLM.settings.save({ ...state.settings });
+    // Live session: flip direction in place; rides the query string otherwise.
+    if (state.ws && state.ws.isOpen()) state.ws.setDirection(state.langDir);
+  });
+  // Task toggle: knob left = 번역 (translate), knob right = 전사 (transcribe).
+  const taskToggle = toggleSwitch("번역", "전사", state.task === "transcribe", (isRight) => {
+    state.task = isRight ? "transcribe" : "translate";
+    state.settings.taskMode = state.task;
+    SLLM.settings.save({ ...state.settings });
+    if (state.ws && state.ws.isOpen()) state.ws.setTask(state.task);
+  });
+  const optionsBtn = button("⚙", "ctrl-btn gear");
+  optionsBtn.title = "옵션";
+  const paramBtn = button("파라미터", "ctrl-btn");
   const statusEl = SLLM.statusDot.create();
-  controls.append(micBtn, langBtn, taskBtn, optionsBtn, hyperBtn, statusEl);
+  controls.append(micBtn, langToggle, taskToggle, optionsBtn, paramBtn, statusEl);
 
   const tagsRow = el("div", "tags-row");
 
@@ -58,7 +72,12 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   container.appendChild(view);
 
   // ---- overlay band ------------------------------------------------------
-  state.band = SLLM.overlayBand.create(bandEl);
+  state.band = SLLM.overlayBand.create(bandEl, {
+    onHeightChange: (px) => {
+      state.settings.bandHeightPx = px;
+      SLLM.settings.save({ ...state.settings });
+    },
+  });
   applyBandSettings(state.band, state.settings);
 
   // ---- browser navigation -----------------------------------------------
@@ -208,24 +227,6 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     }
   });
 
-  langBtn.addEventListener("click", () => {
-    state.langDir = state.langDir === "en2ko" ? "ko2en" : "en2ko";
-    langBtn.textContent = langLabel(state.langDir);
-    state.settings.languageDirection = state.langDir;
-    SLLM.settings.save({ ...state.settings });
-    // Live session: flip direction in place. If the socket isn't up yet the new
-    // direction rides the query string on the next connect.
-    if (state.ws && state.ws.isOpen()) state.ws.setDirection(state.langDir);
-  });
-
-  taskBtn.addEventListener("click", () => {
-    state.task = state.task === "translate" ? "transcribe" : "translate";
-    taskBtn.textContent = taskLabel(state.task);
-    state.settings.taskMode = state.task;
-    SLLM.settings.save({ ...state.settings });
-    if (state.ws && state.ws.isOpen()) state.ws.setTask(state.task);
-  });
-
   optionsBtn.addEventListener("click", () => {
     SLLM.settings.openOptions(state.settings, async (saved) => {
       const sourceChanged = saved.audioSource !== state.settings.audioSource;
@@ -246,7 +247,7 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     });
   });
 
-  hyperBtn.addEventListener("click", () => {
+  paramBtn.addEventListener("click", () => {
     SLLM.settings.openHyperparams(state.settings, (saved) => {
       state.settings = saved;
       // Apply live without reconnect; rides the next connect otherwise.
@@ -280,13 +281,6 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     view.remove();
   };
 
-  // ---- helpers -----------------------------------------------------------
-  function langLabel(dir) {
-    return dir === "ko2en" ? "한국어 → 영어" : "영어 → 한국어";
-  }
-  function taskLabel(t) {
-    return t === "transcribe" ? "전사" : "번역";
-  }
 };
 
 // shared tiny DOM helpers (module scope)
@@ -301,6 +295,28 @@ function button(text, className) {
   b.type = "button";
   return b;
 }
+// Sliding two-state toggle. Shows `leftLabel` (knob left) or `rightLabel` (knob
+// right); clicking flips and calls onToggle(isRight). startRight picks the
+// initial side.
+function toggleSwitch(leftLabel, rightLabel, startRight, onToggle) {
+  const sw = el("button", "toggle-switch");
+  sw.type = "button";
+  const label = el("span", "toggle-label");
+  const knob = el("span", "toggle-knob");
+  sw.append(label, knob);
+  let right = !!startRight;
+  function apply() {
+    sw.classList.toggle("is-right", right);
+    label.textContent = right ? rightLabel : leftLabel;
+  }
+  apply();
+  sw.addEventListener("click", () => {
+    right = !right;
+    apply();
+    onToggle(right);
+  });
+  return sw;
+}
 function safe(fn) {
   try {
     fn();
@@ -310,4 +326,5 @@ function applyBandSettings(band, s) {
   band.setAlphaPct(s.bandTransparencyPct);
   band.setWidth(s.bandWidthPx);
   band.setRecentLines(s.recentLines);
+  band.setHeight(s.bandHeightPx);
 }

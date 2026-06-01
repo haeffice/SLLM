@@ -8,12 +8,12 @@
 ```
 translate/
 ├── be/                         # 번역 서버 (FastAPI + uvicorn, HTTPS/WSS)
-│   ├── main.py                 #   /health(HTTP) + /ws/translate(WebSocket), lifespan 비동기 로드
+│   ├── main.py                 #   /health(HTTP) + /ws(WebSocket), lifespan 비동기 로드
 │   ├── translator.py           #   모델 레지스트리 + 장치/체크포인트 해석
 │   ├── models/
 │   │   ├── base.py             #   Translator 추상 인터페이스 (stream_step)
 │   │   └── mock.py             #   MockTranslator (실모델 교체 지점)
-│   ├── routers/ws.py           #   WS /ws/translate (로딩/실패 가드 포함)
+│   ├── routers/ws.py           #   WS /ws (로딩/실패 가드 포함)
 │   ├── preprocess.py           #   PCM16 → float32 (pcm16_to_float)
 │   ├── gen-cert.sh             #   자체서명 인증서 생성
 │   ├── run.sh                  #   체크포인트 인자 + TLS uvicorn 기동
@@ -73,7 +73,7 @@ curl -k https://localhost:9001/health
 
 (`-k`는 자체서명 인증서 검증 우회)
 
-번역은 WebSocket(`wss://<host>:9001/ws/translate?src=en&tgt=ko&task=translate`)으로
+번역은 WebSocket(`wss://<host>:9001/ws?src=en&tgt=ko&task=translate`)으로
 동작한다. 오디오는 **바이너리 프레임**으로 보내므로 `websocat`로는 컨트롤 메시지만
 확인 가능하다.
 
@@ -88,7 +88,7 @@ curl -k https://localhost:9001/health
   - `{"type":"directionchange","direction":"en2ko"|"ko2en"}` — 번역 방향 전환.
   - `{"type":"taskchange","task":"translate"|"transcribe"}` — 번역/전사 전환.
   - `{"type":"micoff"}` — 마이크 끔, 서버 디코딩 버퍼 리셋.
-  - `{"type":"optionschanged", ...AIOptions}` — 하이퍼파라미터(AIOptions)를
+  - `{"type":"optionschanged", ...AIOptions}` — 파라미터(AIOptions)를
     평탄한 형태로 전달. 소켓 연결 직후와 다이얼로그 저장 시 전송.
   - (방향·task 전환과 micoff는 모두 누적 디코딩 컨텍스트를 비운다.)
 
@@ -158,9 +158,11 @@ npm start
    `AudioWorklet`이 PCM16으로 변환 → 20ms 바이너리 프레임으로 **WebSocket** 전송.
    소켓은 첫 마이크 켜기에서 한 번 열려, 이후 마이크 토글·방향/task 전환에도
    재연결 없이 유지된다(컨트롤 메시지로 세션만 갱신).
-4. 서버가 보내는 `confirmed`/`prediction`을 화면 하단 **오버레이 밴드**에 표시.
-   `confirmed`는 **검정**, `prediction`은 **회색**(bold). 배경 투명도는 옵션에서
-   조절(0% = 화면 가림, 100% = 글씨만 표시).
+4. 서버가 보내는 `confirmed`/`prediction`을 화면 하단 **자막 패널**에 표시.
+   `confirmed`는 **검정**, `prediction`은 **회색**(bold). 패널은 검은 테두리 +
+   `#e9ecef` 배경의 박스이며, **상단 손잡이를 드래그해 높이를 조절**(설정에 저장)
+   할 수 있다. 최근 줄은 진하게, 이전 줄은 위로 갈수록 옅어지며(스크롤바 없이)
+   **스크롤로 이전 자막**을 볼 수 있다. 배경 투명도는 옵션에서 조절.
 
 ---
 
@@ -173,15 +175,20 @@ npm start
 | 서버 URL      | (빌드값)| 런타임 오버라이드 (빌드 시 주입값이 기본)   |
 | 오디오 소스   | 마이크  | 마이크 / 시스템 음성                        |
 | 투명도        | 0       | 0=가림, 100=글씨만 (`alpha = 1 - pct/100`)  |
-| 표시 너비     | 720px   | 오버레이 텍스트 최대 너비                   |
-| 최근 줄 수    | 3       | 표시할 최근 (시각적) 줄 수                  |
+| 표시 너비     | 720px   | 자막 패널 최대 너비                         |
+| 최근 줄 수    | 3       | 옅어지기 전 진하게 유지할 최근 줄 수        |
 
-**하이퍼파라미터** 버튼은 AIOptions(waitK·kvCache·mode·청크 길이·preview 관련
-파라미터 등)를 편집한다. 저장하면 `settings.hyperparameters`에 보관되고
-`{"type":"optionschanged", ...}`로 서버에 전송된다(연결 직후에도 1회 전송).
+자막 패널 **높이**(`bandHeightPx`, 기본 384px)는 옵션이 아니라 패널 상단 손잡이를
+드래그해 조절하며 설정에 저장된다.
 
-설정은 `userData/settings.json`에 저장된다. 언어 방향(영↔한)과 task(번역/전사)는
-상단 토글 버튼으로 전환하며, 캡처 중에도 재연결 없이 즉시 반영된다.
+**파라미터** 버튼은 AIOptions(waitK·kvCache·mode·청크 길이·preview 관련
+파라미터 등)를 편집한다(창은 스크롤되며 스크롤바는 숨김). 저장하면
+`settings.hyperparameters`에 보관되고 `{"type":"optionschanged", ...}`로 서버에
+전송된다(연결 직후에도 1회 전송).
+
+설정은 `userData/settings.json`에 저장된다. 언어 방향(`EN→KO`/`KO→EN`)과
+task(`번역`/`전사`)는 상단 **토글 스위치**로 전환하며(왼쪽/오른쪽으로 현재 값 표시),
+캡처 중에도 재연결 없이 즉시 반영된다. **옵션**은 톱니바퀴(⚙) 아이콘 버튼이다.
 
 ---
 
@@ -198,7 +205,31 @@ dict(누적 오디오/디코딩 컨텍스트 보관용; 방향/task 전환·mico
 
 ---
 
-## 6. 트러블슈팅
+## 6. DRM (Widevine) 지원
+
+임베디드 `<webview>`에서 DRM/EME 보호 콘텐츠(예: 보호된 스트리밍)를 재생하려면
+**Widevine CDM**이 필요하다. 이를 위해 Electron 의존성은 **castlabs의 Widevine 포함
+빌드**로 고정되어 있다(vanilla Electron과 동일 버전 + Widevine, drop-in):
+
+```jsonc
+// app/package.json
+"electron": "github:castlabs/electron-releases#v31.7.7+wvcus"
+```
+
+- `npm install` 시 castlabs의 Widevine 포함 Electron 바이너리가 설치된다.
+- 메인 프로세스(`src/main/main.js`)의 `initWidevine()`가 시작 시 `components`
+  (Widevine CDM)를 초기화한다. 시작 로그에 `Widevine: ready`가 보이면 활성화 완료.
+- `components` API가 없는 환경(예: vanilla Electron으로 교체한 경우)에서는 자동으로
+  건너뛰어(no-op) DRM 없이 그대로 실행된다(로그: `Widevine: components API unavailable`).
+- **배포(설치 파일) 시에는 castlabs EVS 계정으로 VMP 서명**이 추가로 필요하다
+  (개발 실행 `npm start`에는 불필요). 자세한 절차는 castlabs/electron-releases 문서 참고.
+
+> Electron 버전을 올릴 때는 castlabs에서 해당 메이저의 `vXX.Y.Z+wvcus` 태그가
+> 존재하는지 확인하고 그 태그로 핀해야 한다.
+
+---
+
+## 7. 트러블슈팅
 
 - **인증서 경고/연결 실패**: LAN IP로 `gen-cert.sh`를 다시 실행했는지 확인. 앱은
   설정된 서버 호스트에 한해서만 자체서명 인증서를 신뢰한다(WSS 포함).

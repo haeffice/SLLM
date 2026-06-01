@@ -22,7 +22,7 @@ SLLM.net = (() => {
     const q = new URLSearchParams({ src, tgt });
     if (task) q.set("task", task);
     if (model) q.set("model", model);
-    return `${wsBase}/ws/translate?${q.toString()}`;
+    return `${wsBase}/ws?${q.toString()}`;
   }
 
   // The socket carries two kinds of client→server frames:
