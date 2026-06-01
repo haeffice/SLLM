@@ -48,7 +48,11 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
     SLLM.settings.save({ ...state.settings });
     if (state.ws && state.ws.isOpen()) state.ws.setTask(state.task);
   });
-  const optionsBtn = button("⚙", "ctrl-btn gear");
+  // Direction toggle a touch wider, task toggle a touch narrower (same total).
+  langToggle.classList.add("lang");
+  taskToggle.classList.add("task");
+  const optionsBtn = button("", "ctrl-btn gear");
+  optionsBtn.innerHTML = GEAR_SVG;
   optionsBtn.title = "옵션";
   const paramBtn = button("파라미터", "ctrl-btn");
   const statusEl = SLLM.statusDot.create();
@@ -277,6 +281,7 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   return async function destroy() {
     await stopMic();
     closeWs();
+    if (state.band) state.band.destroy();
     safe(() => webview.stop());
     view.remove();
   };
@@ -324,7 +329,11 @@ function safe(fn) {
 }
 function applyBandSettings(band, s) {
   band.setAlphaPct(s.bandTransparencyPct);
-  band.setWidth(s.bandWidthPx);
   band.setRecentLines(s.recentLines);
   band.setHeight(s.bandHeightPx);
 }
+
+// Settings (옵션) gear — inline SVG so it renders crisply at any size. stroke
+// uses currentColor to inherit the button's text color.
+const GEAR_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
