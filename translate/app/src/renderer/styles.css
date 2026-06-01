@@ -127,6 +127,60 @@ body {
   color: #fff;
   border-color: #2383e2;
 }
+/* Gear icon button (옵션) */
+.ctrl-btn.gear {
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 8px;
+}
+
+/* Sliding toggle switch (language direction / task). Always a blue-bordered
+   white pill with a white knob; the current value shows in black on the side
+   opposite the knob. */
+.toggle-switch {
+  position: relative;
+  width: 88px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 2px solid #2383e2;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #2383e2;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: left 0.15s ease;
+}
+.toggle-switch.is-right .toggle-knob {
+  left: calc(100% - 22px);
+}
+.toggle-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  pointer-events: none;
+}
+.toggle-switch:not(.is-right) .toggle-label {
+  justify-content: flex-end;
+  padding-right: 10px; /* knob left → label on the right */
+}
+.toggle-switch.is-right .toggle-label {
+  justify-content: flex-start;
+  padding-left: 10px; /* knob right → label on the left */
+}
 .tags-row {
   width: 100%;
   display: flex;
@@ -183,29 +237,72 @@ body {
   right: 0;
   bottom: 0;
   z-index: 10;
-  pointer-events: none;
+  pointer-events: none; /* container passes clicks through to the browser */
   padding: 12px 16px;
   display: flex;
   justify-content: center;
-  /* alpha set inline by overlay-band.js; default opaque (transparency 0%) */
-  background: rgba(255, 255, 255, var(--band-alpha, 1));
 }
-.overlay-lines {
+.overlay-panel {
   --band-width: 720px;
-  --recent-lines: 3;
-  --band-line-height: 1.6em;
   width: 100%;
   max-width: var(--band-width);
+  height: 384px; /* set inline by overlay-band.js (user-resizable) */
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  max-height: calc(var(--recent-lines) * var(--band-line-height));
+  pointer-events: auto; /* the panel is interactive: scroll + resize */
+  /* alpha set inline by overlay-band.js; default opaque (transparency 0%) */
+  background: rgba(233, 236, 239, var(--band-alpha, 1)); /* #e9ecef */
+  border: 1px solid #000;
+  border-radius: 8px;
   overflow: hidden;
+}
+.overlay-resizer {
+  flex: 0 0 auto;
+  height: 14px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.overlay-resizer::before {
+  content: "";
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.overlay-scroll {
+  --band-line-height: 1.6em;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 12px 10px;
   line-height: var(--band-line-height);
   font-weight: 700;
   font-size: 20px;
+  /* Fade older (upper) lines; the bottom --solid-px stays fully opaque. */
+  -webkit-mask-image: linear-gradient(
+    to top,
+    #000 0,
+    #000 var(--solid-px, 96px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to top,
+    #000 0,
+    #000 var(--solid-px, 96px),
+    transparent 100%
+  );
+}
+.overlay-scroll::-webkit-scrollbar {
+  display: none; /* scrollable, but no visible scrollbar */
 }
 .overlay-text {
+  /* Bottom-align: short content sits in the solid zone near the bottom; once it
+     overflows, margin-top auto collapses and the box scrolls normally. */
+  margin-top: auto;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -253,9 +350,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Tall forms (hyperparameters) scroll inside the dialog. */
+  /* Tall forms (parameters) scroll inside the dialog; scrollbar hidden. */
   max-height: 70vh;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.dialog-body::-webkit-scrollbar {
+  display: none; /* Chromium */
 }
 .field {
   display: flex;

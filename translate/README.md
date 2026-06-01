@@ -88,7 +88,7 @@ curl -k https://localhost:9001/health
   - `{"type":"directionchange","direction":"en2ko"|"ko2en"}` — 번역 방향 전환.
   - `{"type":"taskchange","task":"translate"|"transcribe"}` — 번역/전사 전환.
   - `{"type":"micoff"}` — 마이크 끔, 서버 디코딩 버퍼 리셋.
-  - `{"type":"optionschanged", ...AIOptions}` — 하이퍼파라미터(AIOptions)를
+  - `{"type":"optionschanged", ...AIOptions}` — 파라미터(AIOptions)를
     평탄한 형태로 전달. 소켓 연결 직후와 다이얼로그 저장 시 전송.
   - (방향·task 전환과 micoff는 모두 누적 디코딩 컨텍스트를 비운다.)
 
@@ -158,9 +158,11 @@ npm start
    `AudioWorklet`이 PCM16으로 변환 → 20ms 바이너리 프레임으로 **WebSocket** 전송.
    소켓은 첫 마이크 켜기에서 한 번 열려, 이후 마이크 토글·방향/task 전환에도
    재연결 없이 유지된다(컨트롤 메시지로 세션만 갱신).
-4. 서버가 보내는 `confirmed`/`prediction`을 화면 하단 **오버레이 밴드**에 표시.
-   `confirmed`는 **검정**, `prediction`은 **회색**(bold). 배경 투명도는 옵션에서
-   조절(0% = 화면 가림, 100% = 글씨만 표시).
+4. 서버가 보내는 `confirmed`/`prediction`을 화면 하단 **자막 패널**에 표시.
+   `confirmed`는 **검정**, `prediction`은 **회색**(bold). 패널은 검은 테두리 +
+   `#e9ecef` 배경의 박스이며, **상단 손잡이를 드래그해 높이를 조절**(설정에 저장)
+   할 수 있다. 최근 줄은 진하게, 이전 줄은 위로 갈수록 옅어지며(스크롤바 없이)
+   **스크롤로 이전 자막**을 볼 수 있다. 배경 투명도는 옵션에서 조절.
 
 ---
 
@@ -173,15 +175,20 @@ npm start
 | 서버 URL      | (빌드값)| 런타임 오버라이드 (빌드 시 주입값이 기본)   |
 | 오디오 소스   | 마이크  | 마이크 / 시스템 음성                        |
 | 투명도        | 0       | 0=가림, 100=글씨만 (`alpha = 1 - pct/100`)  |
-| 표시 너비     | 720px   | 오버레이 텍스트 최대 너비                   |
-| 최근 줄 수    | 3       | 표시할 최근 (시각적) 줄 수                  |
+| 표시 너비     | 720px   | 자막 패널 최대 너비                         |
+| 최근 줄 수    | 3       | 옅어지기 전 진하게 유지할 최근 줄 수        |
 
-**하이퍼파라미터** 버튼은 AIOptions(waitK·kvCache·mode·청크 길이·preview 관련
-파라미터 등)를 편집한다. 저장하면 `settings.hyperparameters`에 보관되고
-`{"type":"optionschanged", ...}`로 서버에 전송된다(연결 직후에도 1회 전송).
+자막 패널 **높이**(`bandHeightPx`, 기본 384px)는 옵션이 아니라 패널 상단 손잡이를
+드래그해 조절하며 설정에 저장된다.
 
-설정은 `userData/settings.json`에 저장된다. 언어 방향(영↔한)과 task(번역/전사)는
-상단 토글 버튼으로 전환하며, 캡처 중에도 재연결 없이 즉시 반영된다.
+**파라미터** 버튼은 AIOptions(waitK·kvCache·mode·청크 길이·preview 관련
+파라미터 등)를 편집한다(창은 스크롤되며 스크롤바는 숨김). 저장하면
+`settings.hyperparameters`에 보관되고 `{"type":"optionschanged", ...}`로 서버에
+전송된다(연결 직후에도 1회 전송).
+
+설정은 `userData/settings.json`에 저장된다. 언어 방향(`EN→KO`/`KO→EN`)과
+task(`번역`/`전사`)는 상단 **토글 스위치**로 전환하며(왼쪽/오른쪽으로 현재 값 표시),
+캡처 중에도 재연결 없이 즉시 반영된다. **옵션**은 톱니바퀴(⚙) 아이콘 버튼이다.
 
 ---
 
@@ -198,7 +205,34 @@ dict(누적 오디오/디코딩 컨텍스트 보관용; 방향/task 전환·mico
 
 ---
 
-## 6. 트러블슈팅
+## 6. DRM (Widevine) 지원
+
+임베디드 `<webview>`에서 DRM/EME 보호 콘텐츠(예: 보호된 스트리밍)를 재생하려면
+**Widevine CDM**이 필요하다. 메인 프로세스(`src/main/main.js`)는 앱 시작 시
+`components`(Widevine) 초기화를 시도하며, 이 API는 **Widevine 지원 Electron
+빌드에서만** 존재한다. 일반 Electron에서는 자동으로 건너뛰어(no-op) DRM 없이 그대로
+실행된다(로그: `Widevine: components API unavailable`).
+
+실제 DRM 재생을 활성화하려면:
+
+1. Electron 의존성을 castlabs의 Widevine 포함 빌드로 교체(현재 메이저 v31에 맞는
+   태그 사용). 예:
+
+   ```bash
+   npm install --save-dev "github:castlabs/electron-releases#v31.<patch>+wvcus"
+   ```
+
+2. `npm start` / `npm run build:win`은 그대로 사용. 시작 로그에 `Widevine: ready`가
+   보이면 CDM 활성화 완료.
+3. **배포(설치 파일) 시에는 castlabs EVS 계정으로 VMP 서명**이 추가로 필요하다
+   (개발 실행에는 불필요). 자세한 절차는 castlabs/electron-releases 문서 참고.
+
+> 코드(`initWidevine`)는 이미 DRM-ready 상태이므로, 위 1번처럼 의존성만 교체하면
+> 동작한다. 기본 의존성은 CI 빌드 호환을 위해 일반 Electron으로 유지한다.
+
+---
+
+## 7. 트러블슈팅
 
 - **인증서 경고/연결 실패**: LAN IP로 `gen-cert.sh`를 다시 실행했는지 확인. 앱은
   설정된 서버 호스트에 한해서만 자체서명 인증서를 신뢰한다(WSS 포함).
