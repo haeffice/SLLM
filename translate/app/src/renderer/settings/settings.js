@@ -121,7 +121,7 @@ SLLM.settings = (() => {
     });
   }
 
-  // Options: server URL, audio source, transparency, recent-lines count.
+  // Options: server URL, audio source, transparency.
   function openOptions(current, onApply) {
     const content = document.createElement("div");
     content.className = "dialog-body";
@@ -141,12 +141,10 @@ SLLM.settings = (() => {
     }
 
     const transparency = numberInput(current.bandTransparencyPct, 0, 100);
-    const recent = numberInput(current.recentLines, 1, 20);
 
     content.appendChild(buildField("서버 URL", serverUrl));
     content.appendChild(buildField("오디오 소스", audioSource));
     content.appendChild(buildField("투명도 (0=가림, 100=글씨만)", transparency));
-    content.appendChild(buildField("최근 줄 수", recent));
 
     openDialog("옵션", content, async () => {
       const next = {
@@ -154,7 +152,6 @@ SLLM.settings = (() => {
         serverUrl: serverUrl.value.trim(),
         audioSource: audioSource.value,
         bandTransparencyPct: clamp(parseInt(transparency.value, 10), 0, 100),
-        recentLines: Math.max(1, parseInt(recent.value, 10) || current.recentLines),
       };
       const saved = await save(next);
       onApply(saved);

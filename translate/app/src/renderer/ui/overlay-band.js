@@ -1,12 +1,12 @@
 // Translation panel over the embedded browser: a bordered, resizable box
-// (#e9ecef bg) that scrolls through subtitle history. The most recent lines are
+// (#f1f3f5 bg) that scrolls through subtitle history. The most recent lines are
 // fully opaque; older lines fade out upward (a CSS mask) and stay reachable by
 // scrolling. The scrollbar is hidden.
 //
 // Two modes (toggled by the top-right action button):
-//   - default: docked across the full bottom of the stage (left/right/bottom
-//     margins). Drag the top header to resize height (grows upward). The
-//     pop-out icon switches to drag mode.
+//   - default: a square panel filling the full bottom of the stage edge-to-edge
+//     (no margins, no rounded corners). Drag the top header to resize height
+//     (grows upward). The pop-out icon switches to drag mode.
 //   - drag: a free-floating panel. Drag the header to move it; the eight edge/
 //     corner handles resize it. It is clamped fully inside the stage. The ✕ icon
 //     switches back to default mode.
@@ -22,10 +22,11 @@ SLLM.overlayBand = (() => {
   // just bounds memory over a long session.
   const MAX_CHARS = 8000;
   const TICK_MS = 18; // ~55 chars/sec at one char per tick
-  const LINE_PX = 32; // 20px font × 1.6 line-height — used to size the solid zone
-  const MIN_H = 48;
+  // Min panel height: header (24px) + border + at least ~2 subtitle lines, so the
+  // top fade band (~1 line, see the mask in styles.css) never swallows the whole
+  // visible panel even when shrunk to the floor.
+  const MIN_H = 96;
   const MIN_W = 200;
-  const MARGIN = 16; // docked gap to the stage edges (left/right/bottom)
 
   // Pop-out (default → drag) and close (drag → default) glyphs. stroke uses
   // currentColor so they inherit the button's text color.
@@ -91,7 +92,7 @@ SLLM.overlayBand = (() => {
     let mode = "default";
     let heightPx = MIN_H; // docked height (persisted via onHeightChange)
     // Floating geometry in stage coords; seeded from the docked rect on pop-out.
-    let rect = { left: MARGIN, top: MARGIN, width: 320, height: MIN_H };
+    let rect = { left: 0, top: 0, width: 320, height: MIN_H };
 
     function stageEl() {
       return hostEl.parentElement; // .browser-stage (hostEl is inset:0 within it)
@@ -128,12 +129,6 @@ SLLM.overlayBand = (() => {
       // So CSS alpha is the INVERSE of the option value. Do not "simplify".
       const alpha = 1 - Math.min(100, Math.max(0, pct)) / 100;
       panel.style.setProperty("--band-alpha", String(alpha));
-    }
-
-    // How many recent lines stay fully opaque before the older-lines fade.
-    function setRecentLines(n) {
-      const solid = Math.max(1, n || 1) * LINE_PX;
-      scroll.style.setProperty("--solid-px", `${solid}px`);
     }
 
     function setHeight(px) {
@@ -278,7 +273,7 @@ SLLM.overlayBand = (() => {
       if (mode === "default") {
         const startY = e.clientY;
         const startH = panel.offsetHeight; // border-box → equals the CSS height
-        const maxH = stageSize().h - 2 * MARGIN;
+        const maxH = stageSize().h; // full-bleed docked panel can fill the stage
         beginDrag(
           header,
           e,
@@ -342,7 +337,7 @@ SLLM.overlayBand = (() => {
       window.removeEventListener("resize", onWinResize);
     }
 
-    return { setAlphaPct, setRecentLines, setHeight, update, clear, destroy };
+    return { setAlphaPct, setHeight, update, clear, destroy };
   }
 
   return { create };

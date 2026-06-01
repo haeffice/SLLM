@@ -16,7 +16,6 @@ function defaults() {
     taskMode: "translate", // "translate" | "transcribe"
     bandTransparencyPct: 0, // 0 = opaque band, 100 = text only (see overlay-band.js)
     bandHeightPx: 384, // user-resizable subtitle height (4× the old ~96px default)
-    recentLines: 3, // lines kept fully opaque before the older-lines fade
     // AIOptions sent to the server (see renderer/settings/settings.js,
     // HYPERPARAM_DEFAULTS — keep these two in sync).
     hyperparameters: {

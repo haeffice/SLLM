@@ -256,16 +256,18 @@ body {
   flex-direction: column;
   pointer-events: auto; /* the panel is interactive: scroll + drag/resize */
   /* alpha set inline by overlay-band.js; default opaque (transparency 0%) */
-  background: rgba(233, 236, 239, var(--band-alpha, 1)); /* #e9ecef */
+  background: rgba(241, 243, 245, var(--band-alpha, 1)); /* #f1f3f5 */
   border: 1px solid #000;
-  border-radius: 8px;
+  border-radius: 8px; /* drag mode; default mode overrides to square (see below) */
   overflow: hidden;
 }
-/* Default: docked across the full bottom of the stage (height set inline). */
+/* Default: a square rectangle filling the full browser stage at the bottom
+   (no margins, no rounded corners; height set inline). */
 .overlay-panel.mode-default {
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 0;
 }
 /* Drag: free-floating; left/top/width/height set inline by overlay-band.js. */
 
@@ -382,27 +384,29 @@ body {
   cursor: nesw-resize;
 }
 .overlay-scroll {
-  --band-line-height: 1.6em;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 2px 12px 10px;
-  line-height: var(--band-line-height);
+  padding: 2px 36px 10px;
+  line-height: 1.6em;
   font-weight: 700;
   font-size: 20px;
-  /* Fade older (upper) lines; the bottom --solid-px stays fully opaque. */
+  /* The visible panel stays fully opaque; only the top ~1 line fades, so lines
+     fade as they scroll past the panel's top edge (i.e. beyond the panel's
+     size) — independent of line count. 1.6em == one line-height at 20px font.
+     MIN_H (overlay-band.js) is sized so this band never covers the whole panel. */
   -webkit-mask-image: linear-gradient(
     to top,
     #000 0,
-    #000 var(--solid-px, 96px),
+    #000 calc(100% - 1.6em),
     transparent 100%
   );
   mask-image: linear-gradient(
     to top,
     #000 0,
-    #000 var(--solid-px, 96px),
+    #000 calc(100% - 1.6em),
     transparent 100%
   );
 }

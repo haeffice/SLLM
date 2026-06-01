@@ -329,7 +329,6 @@ function safe(fn) {
 }
 function applyBandSettings(band, s) {
   band.setAlphaPct(s.bandTransparencyPct);
-  band.setRecentLines(s.recentLines);
   band.setHeight(s.bandHeightPx);
 }
 
