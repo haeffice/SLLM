@@ -1,4 +1,4 @@
-name: Build Windows app
+name: Build Windows app v0.2.0
 
 # 빌드 트리거:
 #  - 수동 실행(workflow_dispatch): 서버 URL을 입력해 빌드 시점에 고정.
@@ -55,9 +55,16 @@ jobs:
           SLLM_SERVER_URL: ${{ inputs.server_url || vars.SLLM_SERVER_URL }}
         run: npm run build:win
 
+      # Read the post-bump version (build:win runs `npm version patch` first) so
+      # the artifact name carries the version that was actually built.
+      - name: Read app version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: sllm-translate-windows
+          name: sllm-translate-windows-v${{ steps.ver.outputs.version }}
           path: translate/app/dist/*.exe
           if-no-files-found: error
