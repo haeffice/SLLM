@@ -47,6 +47,14 @@ SLLM.overlayBand = (() => {
     return Math.min(hi, Math.max(lo, v));
   }
 
+  // Length of the leading run where a and b are character-for-character equal.
+  function commonPrefixLen(a, b) {
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i]) i++;
+    return i;
+  }
+
   // opts.onHeightChange(px) fires when the user finishes a docked resize drag.
   function create(hostEl, opts) {
     opts = opts || {};
@@ -190,7 +198,17 @@ SLLM.overlayBand = (() => {
     // confirmed/prediction are the BE's current full strings. `undefined` means
     // the BE omitted that field this message → keep what we have.
     function update(confirmed, prediction) {
-      if (confirmed != null) targetC = confirmed;
+      if (confirmed != null) {
+        // A confirmed (black) frame: the leading run that exactly matches the
+        // previous prediction (targetP, still gray on screen) is promoted to
+        // black instantly — no retyping. Only the diverging remainder types out
+        // from there (tick keeps animating shownC → confirmed).
+        if (confirmed) {
+          const common = commonPrefixLen(confirmed, targetP);
+          if (common > shownC.length) shownC = confirmed.slice(0, common);
+        }
+        targetC = confirmed;
+      }
       if (prediction != null) targetP = prediction;
       ensure();
     }

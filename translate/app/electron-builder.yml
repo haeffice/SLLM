@@ -1,5 +1,5 @@
-appId: com.sllm.translate
-productName: SLLM Translate
+appId: com.srlivetranslation.app
+productName: SR Live Translation
 # Package the locally-installed castlabs Widevine Electron (node_modules/electron/dist)
 # instead of downloading from the public electron mirror, which has no "+wvcus"
 # build (that URL 404s). electronVersion drops the build-metadata suffix.
