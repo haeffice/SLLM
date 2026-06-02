@@ -1,0 +1,59 @@
+# SeldJEPA Stage-2 — Multi-ACCDOA SELD on the frozen causal-Conformer encoder.
+# Single source of truth — run: bash run_train_SeldACCDOA.sh config_seld.yaml
+#
+# N=3 tracks/frame, 2-D azimuth (x,y) ACCDOA, ADPIT loss. The encoder is loaded
+# frozen from the Stage-1 .pt; set model.unfreeze_at_step > 0 for two-phase
+# fine-tuning. `features` MUST match config_pretrain.yaml.
+
+data:
+  # Manifest JSON {"data": [{"audio_id", "label_id"}], "meta": {...}}
+  # label_id -> .npy of shape (T_label, C, 3, 2) — up-to-3 azimuth (x,y) per class.
+  train_manifest: data/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+
+model:
+  encoder_ckpt: ckpts/seld_jepa/seld_jepa_final.pt   # Stage-1 output (.pt)
+  freeze_encoder: true                  # frozen encoder + trained head (SSL probe)
+  unfreeze_at_step: 0                   # >0 = two-phase: unfreeze the encoder at this step
+  head:
+    num_tracks: 3                       # N (max overlap)
+    num_classes: 12                     # C (set to your taxonomy)
+    pool_factor: 5                      # encoder 50 fps -> 10 Hz labels (= label_hop_ms / (10 ms * 2))
+    activity_threshold: 0.5             # ||(x,y)|| > thr => active
+    unify_angle_deg: 30.0               # same-class track unification
+    label_hop_ms: 100                   # 10 Hz label rate; 1 chunk (100 ms) == 1 label frame
+
+features:                               # MUST match config_pretrain.yaml
+  sample_rate: 24000
+  n_fft: 512
+  win_length: 512
+  hop_length: 240
+  n_mels: 64
+
+loss:
+  swap_prob: 0.5                        # L/R-swap (phi -> -phi) azimuth-mirror augmentation
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  num_train_epochs: 50
+  max_steps: -1                         # >0 overrides epochs
+  learning_rate: 1.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 32
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: ckpts/seld_accdoa
+  logging_steps: 50
+  save_steps: 1000
+  eval_steps: 1000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+
+eval:                                   # consumed by eval_seld_accdoa.py
+  test_manifest: data/test.json
