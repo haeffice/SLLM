@@ -1,0 +1,71 @@
+# SeldJEPA Stage-1 — causal-Conformer LeJEPA self-supervised pre-training.
+# Single source of truth — run: bash run_train_SeldJEPA.sh config_pretrain.yaml
+#
+# Encoder ~0.1B (encoder_dim 512 x 16 layers ~= 98M). 2-channel audio -> 4-ch
+# feature stack [log-mel x2, sin/cos-IPD]; multi-crop temporal views; LeJEPA =
+# JEPA prediction loss + SIGReg (no EMA / stop-gradient / scheduler).
+
+data:
+  # Manifest JSON {"data": [{"audio_id": "wav/clip.wav"}, ...], "meta": {...}}
+  # (label_id, if present, is ignored in Stage-1). audio_path = dirname(manifest)/audio_id
+  train_manifest: data/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+
+features:                               # must match Stage-2; 10 ms hop -> 100 fps STFT
+  sample_rate: 24000
+  n_fft: 512
+  win_length: 512                       # Hann
+  hop_length: 240                       # 10 ms hop @ 24 kHz
+  n_mels: 64
+
+encoder:                                # causal Conformer (streaming-safe)
+  encoder_dim: 512                      # d_model
+  num_layers: 16                        # ~98M encoder; 17 -> ~104M
+  num_heads: 8
+  ffn_expansion: 4                      # Macaron FFN (half-step)
+  conv_kernel: 31                       # CAUSAL depthwise (left-pad 30, right-pad 0)
+  chunk_frames: 5                       # encoder frames / 100 ms chunk (50 fps) -> latency 100 ms
+  frontend_hidden: 128                  # conv-subsample channels (time x2, freq x4)
+  dropout: 0.1
+  pool: last                            # streaming-valid causal pool ("last" | "mean")
+
+views:                                  # DINO-style multi-crop temporal views
+  num_global: 2
+  num_local: 4
+  global_seconds: 2.0
+  local_seconds: 0.6
+
+masking:                                # channel-CONSISTENT SpecAugment (shared across 4 ch)
+  n_time_masks: 2
+  time_width: 16
+  n_freq_masks: 2
+  freq_width: 8
+  spectral_only: false                  # true = leave sin/cos-IPD channels unmasked
+
+objective:                              # LeJEPA / SIGReg (single trade-off knob)
+  sigreg_coeff: 1.0                     # lambda: L = L_pred + lambda * SIGReg
+  num_slices: 1024                      # SIGReg random sketch width
+  num_points: 17                        # Epps-Pulley quadrature knots
+  pred_hidden: 1024                     # JEPA predictor MLP hidden width
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 5.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 5.0e-2
+  warmup_steps: 5000
+  max_steps: 100000
+  per_device_train_batch_size: 32
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bf16: false                           # set true on GPU
+
+train:
+  output_dir: ckpts/seld_jepa
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional .pt warm-start (abort if 0 keys)
