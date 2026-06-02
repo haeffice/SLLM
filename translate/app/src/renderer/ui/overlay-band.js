@@ -22,6 +22,10 @@ SLLM.overlayBand = (() => {
   // just bounds memory over a long session.
   const MAX_CHARS = 8000;
   const TICK_MS = 18; // ~55 chars/sec at one char per tick
+  // TEMP: log every WS frame (confirmed/prediction) to the console so the live
+  // protocol can be confirmed. Set to false (or delete the log in update()) once
+  // the typewriter behavior is verified.
+  const DEBUG_TW = true;
   // Min panel height: header (24px) + border + at least ~2 subtitle lines, so the
   // top fade band (~1 line, see the mask in styles.css) never swallows the whole
   // visible panel even when shrunk to the floor.
@@ -89,11 +93,14 @@ SLLM.overlayBand = (() => {
     panel.append(handlesWrap, header, scroll);
     hostEl.appendChild(panel);
 
-    // The displayed line is one contiguous string `text`; chars [0, confirmedLen)
-    // render black (confirmed), the rest render gray (tentative). `shown` is how
-    // many chars are typed out so far. Key invariant: confirmed (black) text is
-    // NEVER erased — a prediction frame keeps `confirmedLen` and only grows the
-    // gray tail, and only genuinely new / diverging characters ever type.
+    // Two independent sources from the BE: `confirmedText` (finalized, black —
+    // only ever grows) and `predText` (the latest tentative hypothesis). The
+    // displayed line is `text` = confirmedText + the part of predText that
+    // extends past it; chars [0, confirmedLen) render black, the rest gray.
+    // `shown` is how many chars are typed out so far. Confirmed (black) text is
+    // never erased; only the diverging / new tail ever types.
+    let confirmedText = "";
+    let predText = "";
     let text = "";
     let confirmedLen = 0;
     let shown = 0;
@@ -199,42 +206,56 @@ SLLM.overlayBand = (() => {
     // Either way the shared leading run is never re-typed, and confirmed text is
     // never erased.
     function update(confirmed, prediction) {
-      // Pick this frame's full string: a non-empty confirmed wins (black), else
-      // the prediction (gray). Prediction is assumed cumulative — a prefix-
-      // extension of the confirmed text — per the live protocol.
-      const next = confirmed ? confirmed : prediction != null ? prediction : null;
-      if (next == null) return; // no field present → nothing to do
+      // A confirmed value advances the black text, which only ever GROWS — a
+      // shorter / stale confirmed is ignored so black is never erased. A confirmed
+      // frame folds its tentative tail into black, so clear the hypothesis (a
+      // same-frame prediction, if any, re-sets it just below). An empty/omitted
+      // confirmed (a prediction frame) is a no-op for the black text.
+      if (confirmed && confirmed.length >= confirmedText.length) {
+        confirmedText = confirmed;
+        predText = "";
+      }
+      if (prediction != null) predText = prediction;
 
-      if (next === "") {
-        // Empty frame (empty tentative tail / bare end-of-sentence): drop the
-        // gray tail but KEEP the confirmed (black) text — it is never erased.
-        text = text.slice(0, confirmedLen);
-        if (shown > confirmedLen) shown = confirmedLen;
-        if (text.length === 0) stop();
-        else ensure();
-        render();
-        return;
+      // Gray tail = the part of the hypothesis that extends past the confirmed
+      // text (predText is assumed cumulative — a prefix-extension of
+      // confirmedText). The displayed line is the confirmed text + that gray tail.
+      const grayTail =
+        predText.length > confirmedText.length && predText.startsWith(confirmedText)
+          ? predText.slice(confirmedText.length)
+          : "";
+      const next = confirmedText + grayTail;
+
+      if (DEBUG_TW) {
+        const fmt = (s) => (s == null ? "∅" : `${s.length}:${JSON.stringify(s.slice(0, 40))}`);
+        console.log(
+          `[tw] C=${fmt(confirmed)} P=${fmt(prediction)} | confText(${confirmedText.length}) ` +
+            `predText(${predText.length}) extends=${predText.startsWith(confirmedText)} ` +
+            `gray=${JSON.stringify(grayTail.slice(0, 40))}`
+        );
       }
 
       // Keep already-typed chars that still match; rewind only to the divergence
-      // so the new / corrected tail types from there.
+      // so the new / corrected tail types from there (the shared leading run —
+      // including a just-confirmed prefix that was already gray — never re-types).
       const common = commonPrefixLen(text, next);
       if (shown > common) shown = common;
-
-      if (confirmed) {
-        confirmedLen = next.length; // a confirmed frame is fully black
-      } else {
-        // Prediction frame: hold the black boundary, but never beyond where the
-        // new text still agrees with what was confirmed.
-        confirmedLen = Math.min(confirmedLen, common);
-      }
       text = next;
+      confirmedLen = confirmedText.length;
       if (shown > text.length) shown = text.length;
+
+      if (text.length === 0) {
+        stop();
+        render();
+        return;
+      }
       ensure();
     }
 
     function clear() {
       stop();
+      confirmedText = "";
+      predText = "";
       text = "";
       confirmedLen = 0;
       shown = 0;
