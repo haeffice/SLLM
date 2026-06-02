@@ -31,7 +31,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    title: "SLLM Translate",
+    title: "SR Live Translation",
     webPreferences: {
       preload: path.join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
