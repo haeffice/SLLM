@@ -93,15 +93,17 @@ SLLM.overlayBand = (() => {
     panel.append(handlesWrap, header, scroll);
     hostEl.appendChild(panel);
 
-    // Two independent sources from the BE: `confirmedText` (finalized, black —
-    // only ever grows) and `predText` (the tentative tail that continues after
-    // it). The displayed line is `text` = confirmedText + predText; chars
-    // [0, confirmedLen) render black (confirmed), the rest gray. `shown` is the
-    // typewriter position; on a confirm the prefix shared with the prior prediction
-    // is force-revealed at once, so only diverging text types. Confirmed (black)
-    // text is never erased.
+    // State from the BE: `confirmedText` (finalized, black — only ever grows) and
+    // `tentLine` (the full tentative line = confirmed + the last NON-EMPTY
+    // prediction). `tentLine` is FROZEN while prediction comes empty, so its gray
+    // tail survives across a (possibly multi-frame) confirmation and only the part
+    // confirmed catches up to recolors to black. The displayed line `text` is
+    // confirmedText + the part of tentLine past it (gray) — while confirmed still
+    // matches the frozen line; once confirmed diverges, the gray is dropped. Chars
+    // [0, confirmedLen) render black, the rest gray. `shown` is the typewriter
+    // position. Confirmed (black) text is never erased.
     let confirmedText = "";
-    let predText = "";
+    let tentLine = "";
     let text = "";
     let confirmedLen = 0;
     let shown = 0;
@@ -201,32 +203,36 @@ SLLM.overlayBand = (() => {
       render();
     }
 
-    // Two display rules:
-    //   1) prediction grew: the text added to the tentative tail types out one
+    // Display rules:
+    //   1) prediction grows (confirmed unchanged): the appended text types out one
     //      char at a time in gray.
-    //   2) prediction → confirmed: the prefix the new confirmed shares with the
-    //      prior prediction (the common prefix) flips to black AT ONCE, with no
-    //      re-typing — even if the typewriter hadn't revealed it yet. The confirmed
-    //      text that DIVERGES from / extends past the prediction then types out in
-    //      black, and any remaining tentative tail keeps typing in gray.
+    //   2) prediction empty, confirmed grows over one or more frames: hold the
+    //      frozen tentative line (the last non-empty prediction). As confirmed
+    //      catches up to it, the matching prefix recolors to black AT ONCE (no
+    //      re-typing). The first frame confirmed DIVERGES from the frozen line, the
+    //      remaining gray is dropped and the diverging confirmed types out in black.
     function update(confirmed, prediction) {
-      // A confirmed value advances the black text, which only ever GROWS — a
-      // shorter / stale confirmed is ignored so black is never erased. A confirmed
-      // frame folds its tentative tail into black, so clear the hypothesis (a
-      // same-frame prediction, if any, re-sets it just below). An empty/omitted
-      // confirmed (a prediction frame) is a no-op for the black text.
+      // Confirmed only ever GROWS — a shorter / stale value is ignored so black is
+      // never erased.
       const prevConfirmedLen = confirmedText.length;
       if (confirmed && confirmed.length >= confirmedText.length) {
         confirmedText = confirmed;
-        predText = "";
       }
-      if (prediction != null) predText = prediction;
+      // (Re)freeze the tentative line only on a NON-EMPTY prediction. An empty
+      // prediction is a confirm-sequence frame: keep the frozen line so its gray
+      // tail persists until confirmed either reaches or diverges from it.
+      if (prediction) {
+        tentLine = confirmedText + prediction;
+      }
 
-      // `prediction` is the unconfirmed segment's tentative tail — it appends
-      // within a segment and arrives empty on a confirm. The displayed line is
-      // therefore confirmed (black) + prediction (gray): a plain concatenation,
-      // never slice off a "confirmed prefix" (a tail doesn't contain one).
-      const next = confirmedText + predText;
+      // Gray = the frozen tentative line beyond confirmed, but ONLY while confirmed
+      // is still a prefix of it. The moment confirmed diverges (startsWith fails),
+      // the gray is dropped and the diverging confirmed types out in black below.
+      const grayTail =
+        tentLine.length > confirmedText.length && tentLine.startsWith(confirmedText)
+          ? tentLine.slice(confirmedText.length)
+          : "";
+      const next = confirmedText + grayTail;
 
       confirmedLen = confirmedText.length;
 
@@ -257,7 +263,7 @@ SLLM.overlayBand = (() => {
     function clear() {
       stop();
       confirmedText = "";
-      predText = "";
+      tentLine = "";
       text = "";
       confirmedLen = 0;
       shown = 0;
