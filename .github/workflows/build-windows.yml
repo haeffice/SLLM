@@ -1,4 +1,4 @@
-name: Build Windows app v0.2.0
+name: Build Windows app
 
 # 빌드 트리거:
 #  - 수동 실행(workflow_dispatch): 서버 URL을 입력해 빌드 시점에 고정.
@@ -19,10 +19,11 @@ on:
       - "translate/**"
       - ".github/workflows/build-windows.yml"
 
-# Least privilege: the job only reads the repo and uploads an artifact (which
-# uses the Actions runtime token, not these scopes).
+# The job reads the repo, uploads an artifact (which uses the Actions runtime
+# token, not these scopes), and — on `translate` — pushes the bumped version
+# back to the branch, which needs write access to repo contents.
 permissions:
-  contents: read
+  contents: write
 
 # A newer push to the same ref supersedes an in-flight build.
 concurrency:
@@ -61,6 +62,22 @@ jobs:
         id: ver
         shell: bash
         run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      # Persist the bump: build:win already ran `npm version patch`, mutating
+      # package.json + package-lock.json on the runner. Commit those back so the
+      # next build increments from here (0.2.1 → 0.2.2 …) instead of always
+      # producing 0.2.1. `[skip ci]` keeps this commit from re-triggering the
+      # translate/** push build (infinite loop). Guarded to translate so a
+      # workflow_dispatch on another branch never writes to it.
+      - name: Commit bumped version back
+        if: github.ref_name == 'translate'
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git diff --cached --quiet || git commit -m "ci(app): bump version to v${{ steps.ver.outputs.version }} [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
