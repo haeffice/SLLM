@@ -1,7 +1,7 @@
 {
   "name": "sr-live-translation",
   "productName": "SR Live Translation",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Real-time speech-translation desktop client (Electron)",
   "author": "SLLM",
   "main": "src/main/main.js",
