@@ -11,10 +11,12 @@
 //     corner handles resize it. It is clamped fully inside the stage. The ✕ icon
 //     switches back to default mode.
 //
-// Rendering is a typewriter: the BE streams `confirmed`/`prediction` as the
-// current FULL strings, both growing by prefix-extension (e.g. prediction
-// "나는" → "나는 밥을" → "나는 밥을 먹었다"). We reveal the newly-arrived tail one
-// character at a time — gray for the tentative prediction, black for confirmed.
+// Rendering is a typewriter. The BE streams `confirmed` (the finalized line so
+// far, cumulative — only grows) and `prediction` (the tentative tail that
+// continues after it; it accumulates while a segment streams and arrives EMPTY
+// on the frame that promotes that tail into `confirmed`). The displayed line is
+// confirmed + tail; we reveal newly-arrived characters one at a time — gray for
+// the tentative tail, black for confirmed.
 window.SLLM = window.SLLM || {};
 
 SLLM.overlayBand = (() => {
@@ -89,11 +91,17 @@ SLLM.overlayBand = (() => {
     panel.append(handlesWrap, header, scroll);
     hostEl.appendChild(panel);
 
-    // target* = what the BE wants displayed; shown* = what's typed so far.
-    let targetC = "";
-    let targetP = "";
-    let shownC = "";
-    let shownP = "";
+    // Two independent sources from the BE: `confirmedText` (finalized, black —
+    // only ever grows) and `predText` (the tentative tail that continues after
+    // it). The displayed line is `text` = confirmedText + predText; chars
+    // [0, confirmedLen) render black, the rest gray. `shown` is how many chars are
+    // typed out so far. Confirmed (black) text is never erased; only the diverging
+    // / new tail ever types.
+    let confirmedText = "";
+    let predText = "";
+    let text = "";
+    let confirmedLen = 0;
+    let shown = 0;
     let timer = null;
 
     // ---- layout state ----------------------------------------------------
@@ -149,13 +157,16 @@ SLLM.overlayBand = (() => {
       // scrolled up to read history isn't yanked back down by new text.
       const atBottom =
         scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 4;
-      let c = shownC;
-      if (c.length > MAX_CHARS) c = c.slice(c.length - MAX_CHARS);
-      confirmedEl.textContent = c;
-      predictionEl.textContent = shownP ? (c ? " " : "") + shownP : "";
-      // Caret only while typing; gray over a prediction tail, else black.
-      caretEl.style.display = timer ? "" : "none";
-      caretEl.style.color = shownP ? "#888" : "#000";
+      const blackEnd = Math.min(shown, confirmedLen);
+      let black = text.slice(0, blackEnd);
+      const gray = shown > confirmedLen ? text.slice(confirmedLen, shown) : "";
+      // Bound retained black text (memory) without disturbing the live tail.
+      if (black.length > MAX_CHARS) black = black.slice(black.length - MAX_CHARS);
+      confirmedEl.textContent = black;
+      predictionEl.textContent = gray;
+      // Caret only while typing actual text; gray over a prediction tail, else black.
+      caretEl.style.display = timer && text.length > 0 ? "" : "none";
+      caretEl.style.color = gray ? "#888" : "#000";
       if (atBottom) scroll.scrollTop = scroll.scrollHeight;
     }
 
@@ -171,54 +182,74 @@ SLLM.overlayBand = (() => {
     }
 
     function tick() {
-      // A target no longer an extension of what's shown means a reset/clear/
-      // replacement (e.g. prediction folded into confirmed) — snap to it.
-      if (targetC !== shownC && !targetC.startsWith(shownC)) shownC = targetC;
-      if (targetP !== shownP && !targetP.startsWith(shownP)) shownP = targetP;
-
-      const pending =
-        targetC.length - shownC.length + (targetP.length - shownP.length);
-      if (pending > 0) {
-        // One char per tick normally; speed up if we've fallen far behind.
-        let step = Math.max(1, Math.ceil(pending / 40));
-        while (step-- > 0) {
-          if (shownC.length < targetC.length) {
-            shownC = targetC.slice(0, shownC.length + 1);
-          } else if (shownP.length < targetP.length) {
-            shownP = targetP.slice(0, shownP.length + 1);
-          } else {
-            break;
-          }
-        }
+      if (shown >= text.length) {
+        stop();
+        render();
+        return;
       }
-      if (shownC === targetC && shownP === targetP) stop();
+      // One char per tick normally; speed up if we've fallen far behind.
+      const step = Math.max(1, Math.ceil((text.length - shown) / 40));
+      shown = Math.min(text.length, shown + step);
+      if (shown >= text.length) stop();
       render();
     }
 
-    // confirmed/prediction are the BE's current full strings. `undefined` means
-    // the BE omitted that field this message → keep what we have.
+    // Two display rules, both expressed through the same diff below:
+    //   1) prediction grew: the text added since the previous prediction types
+    //      out one char at a time in gray (the confirmed black prefix is kept).
+    //   2) prediction → confirmed: the leading run shared by the previous
+    //      prediction and the new confirmed (the common prefix) was already shown
+    //      gray, so it flips to black with NO retyping; the diverging confirmed
+    //      tail then types out in black.
+    // In both cases the shared leading run is never re-typed and confirmed (black)
+    // text is never erased. The common-prefix rewind (commonPrefixLen below)
+    // captures rule 2's "matched prefix" against whatever was last on screen,
+    // which includes the previous prediction's gray tail.
     function update(confirmed, prediction) {
-      if (confirmed != null) {
-        // A confirmed (black) frame: the leading run that exactly matches the
-        // previous prediction (targetP, still gray on screen) is promoted to
-        // black instantly — no retyping. Only the diverging remainder types out
-        // from there (tick keeps animating shownC → confirmed).
-        if (confirmed) {
-          const common = commonPrefixLen(confirmed, targetP);
-          if (common > shownC.length) shownC = confirmed.slice(0, common);
-        }
-        targetC = confirmed;
+      // A confirmed value advances the black text, which only ever GROWS — a
+      // shorter / stale confirmed is ignored so black is never erased. A confirmed
+      // frame folds its tentative tail into black, so clear the hypothesis (a
+      // same-frame prediction, if any, re-sets it just below). An empty/omitted
+      // confirmed (a prediction frame) is a no-op for the black text.
+      if (confirmed && confirmed.length >= confirmedText.length) {
+        confirmedText = confirmed;
+        predText = "";
       }
-      if (prediction != null) targetP = prediction;
+      if (prediction != null) predText = prediction;
+
+      // Per the BE contract (be/models/base.py), `prediction` is the tentative
+      // TAIL that continues AFTER the confirmed text — NOT a restatement of the
+      // whole line. So the displayed line is simply confirmed (black) + that gray
+      // tail. (The previous code assumed prediction repeated the confirmed prefix
+      // and sliced it off via startsWith; once confirmed was non-empty a real tail
+      // never starts with it, so the slice yielded "" and the gray tail silently
+      // vanished — which is what broke rule 2's recolor.)
+      const next = confirmedText + predText;
+
+      // Keep already-typed chars that still match; rewind only to the divergence
+      // so the new / corrected tail types from there (the shared leading run —
+      // including a just-confirmed prefix that was already gray — never re-types).
+      const common = commonPrefixLen(text, next);
+      if (shown > common) shown = common;
+      text = next;
+      confirmedLen = confirmedText.length;
+      if (shown > text.length) shown = text.length;
+
+      if (text.length === 0) {
+        stop();
+        render();
+        return;
+      }
       ensure();
     }
 
     function clear() {
       stop();
-      targetC = "";
-      targetP = "";
-      shownC = "";
-      shownP = "";
+      confirmedText = "";
+      predText = "";
+      text = "";
+      confirmedLen = 0;
+      shown = 0;
       render();
     }
 
