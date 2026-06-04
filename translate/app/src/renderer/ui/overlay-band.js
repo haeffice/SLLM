@@ -11,14 +11,15 @@
 //     corner handles resize it. It is clamped fully inside the stage. The ✕ icon
 //     switches back to default mode.
 //
-// Rendering is a typewriter. The BE streams `confirmed` (the finalized line so
-// far, cumulative — only grows) and `prediction` (the tentative tail that
-// continues after it; it accumulates while a segment streams and arrives EMPTY
-// on the frame that promotes that tail into `confirmed`). The displayed line is
-// confirmed + tail. The gray tentative tail types out one char at a time. When a
-// confirm lands, the prefix it shares with the prior prediction recolors to black
-// instantly (no re-typing); only confirmed text that diverges from / extends past
-// the prediction types out in black.
+// Rendering is a typewriter. The BE streams `confirmed` and `prediction` as the
+// FULL cumulative line from the sentence start — `confirmed` is the finalized
+// prefix (only grows), `prediction` is the tentative whole-line hypothesis (it
+// extends `confirmed`, and arrives EMPTY on the frame that promotes part of it
+// into `confirmed`). The displayed line is `confirmed` (black) + the part of the
+// hypothesis past it (gray); the gray tail types out one char at a time. When a
+// confirm lands, the prefix it shares with the prior prediction (exact-match
+// common prefix) recolors to black instantly with no re-typing; the confirmed
+// text that diverges from / extends past the prior prediction types out in black.
 window.SLLM = window.SLLM || {};
 
 SLLM.overlayBand = (() => {
@@ -94,12 +95,12 @@ SLLM.overlayBand = (() => {
     hostEl.appendChild(panel);
 
     // Two independent sources from the BE: `confirmedText` (finalized, black —
-    // only ever grows) and `predText` (the tentative tail that continues after
-    // it). The displayed line is `text` = confirmedText + predText; chars
-    // [0, confirmedLen) render black (confirmed), the rest gray. `shown` is the
-    // typewriter position; on a confirm the prefix shared with the prior prediction
-    // is force-revealed at once, so only diverging text types. Confirmed (black)
-    // text is never erased.
+    // only ever grows) and `predText` (the full tentative line, which extends
+    // confirmedText). The displayed line is `text` = confirmedText + the part of
+    // predText past it; chars [0, confirmedLen) render black (confirmed), the rest
+    // gray. `shown` is the typewriter position; on a confirm the prefix shared with
+    // the prior prediction is force-revealed at once, so only diverging text types.
+    // Confirmed (black) text is never erased.
     let confirmedText = "";
     let predText = "";
     let text = "";
@@ -222,14 +223,16 @@ SLLM.overlayBand = (() => {
       }
       if (prediction != null) predText = prediction;
 
-      // Per the BE contract (be/models/base.py), `prediction` is the tentative
-      // TAIL that continues AFTER the confirmed text — NOT a restatement of the
-      // whole line. So the displayed line is simply confirmed (black) + that gray
-      // tail. (The previous code assumed prediction repeated the confirmed prefix
-      // and sliced it off via startsWith; once confirmed was non-empty a real tail
-      // never starts with it, so the slice yielded "" and the gray tail silently
-      // vanished — which is what broke rule 2's recolor.)
-      const next = confirmedText + predText;
+      // `prediction` is the FULL tentative line (cumulative from the sentence
+      // start — it includes/extends the confirmed prefix), so the gray tail is
+      // whatever runs PAST confirmedText. Slicing that prefix off is what keeps the
+      // line from duplicating (confirmed + full-prediction). The startsWith guard
+      // means a hypothesis that doesn't extend confirmed just shows no gray.
+      const grayTail =
+        predText.length > confirmedText.length && predText.startsWith(confirmedText)
+          ? predText.slice(confirmedText.length)
+          : "";
+      const next = confirmedText + grayTail;
 
       confirmedLen = confirmedText.length;
 
