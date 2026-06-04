@@ -222,13 +222,10 @@ SLLM.overlayBand = (() => {
       }
       if (prediction != null) predText = prediction;
 
-      // Per the BE contract (be/models/base.py), `prediction` is the tentative
-      // TAIL that continues AFTER the confirmed text — NOT a restatement of the
-      // whole line. So the displayed line is simply confirmed (black) + that gray
-      // tail. (The previous code assumed prediction repeated the confirmed prefix
-      // and sliced it off via startsWith; once confirmed was non-empty a real tail
-      // never starts with it, so the slice yielded "" and the gray tail silently
-      // vanished — which is what broke rule 2's recolor.)
+      // `prediction` is the unconfirmed segment's tentative tail — it appends
+      // within a segment and arrives empty on a confirm. The displayed line is
+      // therefore confirmed (black) + prediction (gray): a plain concatenation,
+      // never slice off a "confirmed prefix" (a tail doesn't contain one).
       const next = confirmedText + predText;
 
       confirmedLen = confirmedText.length;

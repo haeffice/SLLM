@@ -55,8 +55,10 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   optionsBtn.innerHTML = GEAR_SVG;
   optionsBtn.title = "옵션";
   const paramBtn = button("파라미터", "ctrl-btn");
+  const debugBtn = button("디버그", "ctrl-btn");
+  debugBtn.title = "수신한 WS 프레임(confirmed/prediction)을 펼쳐 확인";
   const statusEl = SLLM.statusDot.create();
-  controls.append(micBtn, langToggle, taskToggle, optionsBtn, paramBtn, statusEl);
+  controls.append(micBtn, langToggle, taskToggle, optionsBtn, paramBtn, debugBtn, statusEl);
 
   const tagsRow = el("div", "tags-row");
 
@@ -71,9 +73,42 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
 
   const bandEl = el("div", "overlay-band");
 
-  stage.append(webview, bandEl);
+  // Collapsible WS debug panel: lists the raw confirmed/prediction of each frame
+  // the BE sends, so the live protocol can be inspected in-app (no DevTools, works
+  // on any OS). Toggled by the 디버그 button; hidden by default.
+  const debugPanel = el("div", "debug-panel");
+  const debugHeader = el("div", "debug-header");
+  const debugTitle = el("span", "debug-title");
+  debugTitle.textContent = "WS 프레임  ·  C=confirmed  P=prediction";
+  const debugClear = button("지우기", "debug-clear");
+  debugHeader.append(debugTitle, debugClear);
+  const debugLog = el("div", "debug-log");
+  debugPanel.append(debugHeader, debugLog);
+
+  stage.append(webview, bandEl, debugPanel);
   view.append(topbar, stage);
   container.appendChild(view);
+
+  // ---- WS debug panel ----------------------------------------------------
+  // Always record (cheap, capped) so opening the panel shows recent history; the
+  // panel itself is just shown/hidden.
+  let debugSeq = 0;
+  function pushDebug(obj) {
+    debugSeq++;
+    const fmt = (s) => (s == null ? "∅" : JSON.stringify(s));
+    const line = el("div", "debug-line");
+    line.textContent =
+      `#${debugSeq}  C:${fmt(obj.confirmed)}  P:${fmt(obj.prediction)}` +
+      (obj.eos ? "  ⟨eos⟩" : "");
+    debugLog.appendChild(line);
+    while (debugLog.childElementCount > 300) debugLog.removeChild(debugLog.firstChild);
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+  debugBtn.addEventListener("click", () => {
+    const open = debugPanel.classList.toggle("open");
+    debugBtn.classList.toggle("active", open);
+  });
+  debugClear.addEventListener("click", () => debugLog.replaceChildren());
 
   // ---- overlay band ------------------------------------------------------
   state.band = SLLM.overlayBand.create(bandEl, {
@@ -145,6 +180,7 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
         } else if ("prediction" in obj) {
           prediction = obj.prediction || "";
         }
+        pushDebug(obj); // mirror the raw frame into the in-app debug panel
         state.band.update(confirmed, prediction);
       },
       onError: () => {
