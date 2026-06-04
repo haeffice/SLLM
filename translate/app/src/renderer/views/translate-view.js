@@ -55,10 +55,8 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   optionsBtn.innerHTML = GEAR_SVG;
   optionsBtn.title = "옵션";
   const paramBtn = button("파라미터", "ctrl-btn");
-  const debugBtn = button("디버그", "ctrl-btn");
-  debugBtn.title = "수신한 WS 프레임(confirmed/prediction)을 펼쳐 확인";
   const statusEl = SLLM.statusDot.create();
-  controls.append(micBtn, langToggle, taskToggle, optionsBtn, paramBtn, debugBtn, statusEl);
+  controls.append(micBtn, langToggle, taskToggle, optionsBtn, paramBtn, statusEl);
 
   const tagsRow = el("div", "tags-row");
 
@@ -75,13 +73,17 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
 
   // Collapsible WS debug panel: lists the raw confirmed/prediction of each frame
   // the BE sends, so the live protocol can be inspected in-app (no DevTools, works
-  // on any OS). Toggled by the 디버그 button; hidden by default.
+  // on any OS). Toggled from the View → 디버그 패널 menu item; the ✕ closes it.
   const debugPanel = el("div", "debug-panel");
   const debugHeader = el("div", "debug-header");
   const debugTitle = el("span", "debug-title");
   debugTitle.textContent = "WS 프레임  ·  C=confirmed  P=prediction";
+  const debugActions = el("div", "debug-actions");
   const debugClear = button("지우기", "debug-clear");
-  debugHeader.append(debugTitle, debugClear);
+  const debugClose = button("✕", "debug-close");
+  debugClose.title = "디버그 패널 닫기";
+  debugActions.append(debugClear, debugClose);
+  debugHeader.append(debugTitle, debugActions);
   const debugLog = el("div", "debug-log");
   debugPanel.append(debugHeader, debugLog);
 
@@ -92,23 +94,46 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   // ---- WS debug panel ----------------------------------------------------
   // Always record (cheap, capped) so opening the panel shows recent history; the
   // panel itself is just shown/hidden.
+  // Each entry is a "#N" line, then a line of bold C:/P: labels + the raw values.
   let debugSeq = 0;
   function pushDebug(obj) {
     debugSeq++;
     const fmt = (s) => (s == null ? "∅" : JSON.stringify(s));
-    const line = el("div", "debug-line");
-    line.textContent =
-      `#${debugSeq}  C:${fmt(obj.confirmed)}  P:${fmt(obj.prediction)}` +
-      (obj.eos ? "  ⟨eos⟩" : "");
-    debugLog.appendChild(line);
+    const entry = el("div", "debug-line");
+    const seq = el("div", "debug-seq");
+    seq.textContent = `#${debugSeq}`;
+    const body = el("div", "debug-body");
+    const cKey = el("b", "debug-key");
+    cKey.textContent = "C:";
+    const pKey = el("b", "debug-key");
+    pKey.textContent = "P:";
+    body.append(
+      cKey,
+      ` ${fmt(obj.confirmed)}   `,
+      pKey,
+      ` ${fmt(obj.prediction)}${obj.eos ? "   ⟨eos⟩" : ""}`
+    );
+    entry.append(seq, body);
+    debugLog.appendChild(entry);
     while (debugLog.childElementCount > 300) debugLog.removeChild(debugLog.firstChild);
     debugLog.scrollTop = debugLog.scrollHeight;
   }
-  debugBtn.addEventListener("click", () => {
-    const open = debugPanel.classList.toggle("open");
-    debugBtn.classList.toggle("active", open);
-  });
+  function setDebugOpen(open) {
+    debugPanel.classList.toggle("open", !!open);
+  }
+  // The View → 디버그 패널 menu item drives visibility; ✕ closes it (and unchecks the
+  // menu item via setDebugState). Sync the initial state on mount.
+  if (window.api && window.api.onMenuDebug) {
+    window.api.onMenuDebug((open) => setDebugOpen(open));
+  }
+  if (window.api && window.api.getDebugState) {
+    window.api.getDebugState().then(setDebugOpen).catch(() => {});
+  }
   debugClear.addEventListener("click", () => debugLog.replaceChildren());
+  debugClose.addEventListener("click", () => {
+    setDebugOpen(false);
+    if (window.api && window.api.setDebugState) window.api.setDebugState(false);
+  });
 
   // ---- overlay band ------------------------------------------------------
   state.band = SLLM.overlayBand.create(bandEl, {
@@ -317,6 +342,7 @@ SLLM.mountTranslateView = function mountTranslateView(container, settings) {
   return async function destroy() {
     await stopMic();
     closeWs();
+    if (window.api && window.api.onMenuDebug) window.api.onMenuDebug(null);
     if (state.band) state.band.destroy();
     safe(() => webview.stop());
     view.remove();

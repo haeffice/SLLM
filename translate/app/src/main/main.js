@@ -1,6 +1,6 @@
 const path = require("path");
 const electron = require("electron");
-const { app, BrowserWindow, ipcMain } = electron;
+const { app, BrowserWindow, ipcMain, Menu } = electron;
 
 const { serverConfig } = require("./server-config");
 const { installCertHandler } = require("./cert");
@@ -25,6 +25,46 @@ async function initWidevine() {
   } catch (e) {
     console.warn("Widevine: initialization failed, continuing without DRM:", e);
   }
+}
+
+// Application menu: the standard roles (File/Edit/View/Window/Help) plus a
+// View → 디버그 패널 checkbox that toggles the renderer's in-app WS debug panel.
+// The checkbox and the panel's own ✕ button stay in sync over IPC (menu:debug /
+// debug:state); the renderer can read the current state via debug:get.
+function installMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [
+    ...(isMac ? [{ role: "appMenu" }] : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        {
+          id: "debug-panel",
+          label: "디버그 패널",
+          type: "checkbox",
+          checked: false,
+          accelerator: "CmdOrCtrl+D",
+          click: (item) => {
+            if (mainWindow) mainWindow.webContents.send("menu:debug", item.checked);
+          },
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+    { role: "help", submenu: [{ label: "SR Live Translation", enabled: false }] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function createWindow() {
@@ -64,6 +104,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("settings:load", () => settingsStore.load());
   ipcMain.handle("settings:save", (_event, settings) => settingsStore.save(settings));
 
+  // Keep the View → 디버그 패널 checkbox in sync when the panel's ✕ closes it, and
+  // let the renderer read the current state on mount.
+  const debugItem = () => {
+    const menu = Menu.getApplicationMenu();
+    return menu && menu.getMenuItemById("debug-panel");
+  };
+  ipcMain.on("debug:state", (_event, val) => {
+    const item = debugItem();
+    if (item) item.checked = !!val;
+  });
+  ipcMain.handle("debug:get", () => {
+    const item = debugItem();
+    return item ? item.checked : false;
+  });
+
+  installMenu();
   createWindow();
 
   app.on("activate", () => {
