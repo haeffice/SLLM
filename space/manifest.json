@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Approver",
+  "version": "0.1.0",
+  "description": "5분마다 대기 항목을 폴링해 자동 승인 POST를 보내는 확장 프로그램",
+  "permissions": ["alarms", "storage", "webRequest"],
+  "host_permissions": [
+    "https://###TARGET_PAGE_ORIGIN###/*",
+    "https://###API_URL_1_ORIGIN###/*",
+    "https://###API_URL_2_ORIGIN###/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
