@@ -1,0 +1,3 @@
+# Local Python environment (README의 pip install 안내로 생성)
+.venv/
+__pycache__/
