@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+
+# 메쉬 파싱/직렬화 (vtk, obj, stl, ply ...) 및 dummy 변형
+meshio
+numpy
+
+# 실제 mesh-to-mesh 모델 추가 시 의존성을 여기에 추가 (torch 등)
