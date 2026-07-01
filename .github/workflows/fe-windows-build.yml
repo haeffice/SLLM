@@ -71,18 +71,21 @@ jobs:
           --collect-all meshio
           app.py
 
-      - name: Package zip
+      # Release용 zip: 폴더째로 압축 → 풀면 splatter 없이 PhysicsSimulator/ 폴더로 나온다.
+      - name: Package zip (for Release)
         working-directory: physics/fe
         shell: pwsh
         run: >
-          Compress-Archive -Path dist/PhysicsSimulator/*
+          Compress-Archive -Path dist/PhysicsSimulator
           -DestinationPath "dist/PhysicsSimulator-v${{ steps.bump.outputs.version }}.zip"
 
+      # artifact는 폴더를 넘긴다 — upload-artifact가 스스로 1번 zip하므로 .zip을
+      # 넘기면 zip-in-zip이 된다. 폴더를 주면 다운로드 시 단일 zip으로 풀린다.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: PhysicsSimulator-v${{ steps.bump.outputs.version }}
-          path: physics/fe/dist/PhysicsSimulator-v${{ steps.bump.outputs.version }}.zip
+          path: physics/fe/dist/PhysicsSimulator
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
