@@ -89,10 +89,12 @@ def main() -> int:
 
     center_dz = float(new_verts[center, 2] - verts[center, 2])
     corner_dz = float(new_verts[corner, 2] - verts[corner, 2])
-    print(f"[verify] center Δz={center_dz:+.4f} (expect ~-0.3), corner Δz={corner_dz:+.4f} (expect ~0)")
+    print(f"[verify] center Δz={center_dz:+.4f} (expect ~-0.3), corner Δz={corner_dz:+.4f} (expect ≪ center)")
 
-    assert abs(center_dz - (-0.3)) < 1e-6, f"impact node not deformed as expected: {center_dz}"
-    assert abs(corner_dz) < 1e-9, f"node outside radius moved: {corner_dz}"
+    # 모델-불문 검증: 충격점은 힘(-0.3)만큼 눌리고, 반경 밖 노드는 훨씬 덜 움직인다.
+    # (dummy=선형 hard-cutoff → corner 0; metal_dent=가우시안 → 작은 tail.)
+    assert abs(center_dz - (-0.3)) < 1e-3, f"impact node not deformed as expected: {center_dz}"
+    assert abs(corner_dz) < 0.1 * abs(center_dz), f"node outside radius moved too much: {corner_dz}"
 
     print("OK ✓ end-to-end /predict deformation verified")
     return 0

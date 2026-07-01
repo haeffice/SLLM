@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from config import default_model_id, enabled_model_ids, load_one
-from routers import predict
+from routers import predict, simulate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,3 +129,4 @@ def _device_for_loaded(model) -> str | None:
 
 
 app.include_router(predict.router)
+app.include_router(simulate.router)

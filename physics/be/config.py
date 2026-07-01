@@ -27,20 +27,25 @@ from typing import Type
 
 from models.base import BaseMeshPredictor
 from models.dummy import DummyLinearDeformer
+from models.metal_dent import MetalDentSimulator
 
 log = logging.getLogger("be.config")
 
 
 REGISTRY: dict[str, Type[BaseMeshPredictor]] = {
-    DummyLinearDeformer.model_id: DummyLinearDeformer,
+    MetalDentSimulator.model_id: MetalDentSimulator,  # 데모: 시간-시퀀스 dent
+    DummyLinearDeformer.model_id: DummyLinearDeformer,  # 단일 프레임(비교용)
 }
+
+# 데모 기본값 — metal_dent(시퀀스)를 우선 로드/기본 모델로.
+_DEFAULT_ENABLED = "metal_dent,dummy"
 
 
 def enabled_model_ids() -> list[str]:
-    raw = os.environ.get("MESH_MODEL_ENABLED", "dummy")
+    raw = os.environ.get("MESH_MODEL_ENABLED", _DEFAULT_ENABLED)
     ids = [m.strip() for m in raw.split(",") if m.strip()]
     if not ids:
-        return ["dummy"]
+        return _DEFAULT_ENABLED.split(",")
     return ids
 
 
