@@ -2,14 +2,16 @@
 
 PySide6 + PyVista 데스크톱 시뮬레이터. 메쉬를 3D로 보고, 노드를 클릭해 충격점을
 고른 뒤 force를 주면 **시간에 따른 변형 애니메이션**을 재생하고, 변위 크기를
-히트맵('turbo')으로 칠해 보여준다. (피치 데모: 모델 자리에 절차적 mock을 끼워
-"우리가 만들 생성 모델 + 시뮬레이터"를 어필.)
+히트맵('turbo')으로 칠해 보여준다. 시뮬 직후 **부품별 충격 분석**(좌측 [분석] 탭)과
+**LLM 기반 QA 챗**(좌측 하단 입력창 → [챗] 탭)을 제공한다. (피치 데모: 모델 자리에
+절차적 mock을 끼워 "우리가 만들 생성 모델 + 시뮬레이터"를 어필.)
 
-**모델 연결 없이도 동작한다.** 시작 시 내장 시나리오 메쉬(금속 판)가 자동으로 떠서
-노드 피킹·force·애니메이션을 바로 확인할 수 있다. BE/모델이 준비되지 않은 동안에는
-**Simulate가 로컬 `metal_dent` 궤적을 계산**해 재생하며(배너 `DUMMY 모드`), 모델이
-연결되면 자동으로 **BE `/simulate` 프레임**을 재생한다(`LIVE` 배너). 로컬/BE 궤적은
-동일 수식이라 거동이 같다.
+**모델 연결 없이도 동작한다.** 시작 시 기본 시나리오(**허블 우주망원경** — NASA
+public domain 자산, `assets/hubble.obj`)가 자동으로 떠서 노드 피킹·force·애니메이션을
+바로 확인할 수 있다. BE/모델이 준비되지 않은 동안에는 **Simulate가 로컬 `metal_dent`
+궤적을 계산**해 재생하며(배너 `DUMMY 모드`), 모델이 연결되면 자동으로 **BE
+`/simulate` 프레임**을 재생한다(`LIVE` 배너). 로컬/BE 궤적은 동일 수식이라 거동이
+같다. 분석은 FE가 frames에서 직접 계산하므로 두 모드의 수치가 동일하다.
 
 ## 실행 (Windows)
 
@@ -30,14 +32,42 @@ python app.py
 
 ## 사용법
 
-1. **Scenario** 드롭다운으로 내장 메쉬(금속 판 / 캔)를 고르거나, **Load mesh…**로
-   파일을 연다 — **meshio가 지원하는 모든 확장자**(vtk/vtu/obj/stl/ply/off/msh/bdf/
-   inp/mesh/… )를 받으며, 체적 메쉬는 경계면을 자동 추출해 표시한다. (기본 충격점 미리 선택됨.)
+1. **Scenario** 드롭다운으로 내장 메쉬(허블 우주망원경 / 금속 판 / 캔)를 고르거나,
+   **Load mesh…**로 파일을 연다 — **meshio가 지원하는 모든 확장자**(vtk/vtu/obj/stl/
+   ply/off/msh/bdf/inp/mesh/… )를 받으며, 체적 메쉬는 경계면을 자동 추출해 표시한다.
+   (기본 충격점 미리 선택됨 — 허블은 태양전지판 끝단 + 권장 radius 자동 설정.)
 2. 뷰포트에서 노드를 **클릭** → `Impact node`가 설정되고 주황 구로 표시.
 3. **Force X/Y/Z**(충격 방향·세기), 선택적으로 **Radius**(0=자동) / **Scale** 입력.
 4. **Simulate** → 변형 애니메이션 재생 + 변위 히트맵. **▶/⏸**·**Loop**·**Timeline**
    슬라이더로 재생 제어, **Speed(fps)**로 속도 조절.
-5. **Reset** → 원본만 다시 표시.
+5. **Reset** → 원본만 다시 표시 (분석 표는 마지막 결과 유지).
+
+### 부품별 충격 분석 (좌측 [분석] 탭)
+
+Simulate 직후 `analysis.py`가 frames (T,N,3)에서 부품별 지표를 계산한다:
+최대 변위 / 속도 프록시(프레임 차분) / 충격 점수, 부품별 **임계값 대비 상태**
+(OK·WARN·FAIL). 3D 뷰포트에는 부품별 최대 충격 위치 마커(라벨)와 **임계 초과
+정점(빨간 점)**이 표시된다. 표의 행을 선택하면 재질/비고 등 상세가 뜬다.
+
+부품 정의는 자산 sidecar(`assets/hubble.components.json`, `prep_hubble.py`가 bake —
+부품별 vertex 범위·임계값·재질)에서 온다. 허블 기준: **태양전지판·안테나(취약,
+임계 낮음)** vs 본체(견고). 부품 정의가 없는 메쉬(판/캔/사용자 파일)는 "전체 메쉬"
+의사 부품 + 자동 임계값(bbox 대각선 5%)으로 분석한다.
+
+### LLM QA 챗 (좌측 하단 입력창 → [챗] 탭)
+
+분석 결과에 대해 자연어로 질문한다 ("태양전지판 괜찮아?", "어디가 가장 심해?").
+질문은 압축 분석 요약(JSON)과 함께 BE `/chat`으로 전송된다 — BE에 `CHAT_LLM_*`
+env가 설정돼 있으면 **LLM 답변**(`[LLM]` 태그), 아니면 **rule-based 답변**(`[규칙]`).
+서버 미연결 시엔 동일한 규칙 엔진(`chat_fallback.py`, BE와 미러)이 로컬에서 즉답한다
+(`[규칙·로컬]`).
+
+### 자산 재생성 (개발용)
+
+```bash
+python assets/prep_hubble.py   # NASA에서 부품 STL 다운로드 → hubble.obj + components.json
+```
+자산 파일을 갈아치우면 vertex 인덱스가 바뀌므로 **반드시 prep으로 재-bake**한다.
 
 ### 동작 모드 배너 (상태 점 아래)
 
@@ -67,7 +97,7 @@ GitHub Actions가 **빌드마다 patch를 자동으로 +1** 한다(아래 CI 참
 
 ```bat
 pip install pyinstaller
-pyinstaller --noconfirm --windowed --name PhysicsSimulator --add-data "VERSION;." app.py
+pyinstaller --noconfirm --windowed --name PhysicsSimulator --add-data "VERSION;." --add-data "assets;assets" app.py
 # dist\PhysicsSimulator\PhysicsSimulator.exe
 ```
 PyVista/VTK 데이터가 누락되면 `--collect-all pyvista --collect-all pyvistaqt

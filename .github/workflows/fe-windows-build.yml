@@ -65,6 +65,7 @@ jobs:
         run: >
           pyinstaller --noconfirm --windowed --name PhysicsSimulator
           --add-data "VERSION;."
+          --add-data "assets;assets"
           --collect-all pyvista
           --collect-all pyvistaqt
           --collect-all vtkmodules

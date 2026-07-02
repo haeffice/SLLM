@@ -1,18 +1,26 @@
 """Physics Impact Simulator — Windows 데스크톱 FE (PySide6 + PyVista).
 
 흐름:
-  1. 시작 시 내장 시나리오 메쉬(금속 판)가 로드된다. Scenario 드롭다운(판/캔) 또는
-     "Load mesh…"로 로컬 파일(meshio 지원 확장자)을 열 수도 있다.
+  1. 시작 시 기본 시나리오(허블 우주망원경 — NASA public domain 자산)가 로드된다.
+     Scenario 드롭다운(허블/판/캔) 또는 "Load mesh…"로 로컬 파일도 열 수 있다.
   2. 3D 뷰포트에서 노드를 클릭해 impact_node를 고른다.
   3. force(X/Y/Z) · radius · scale을 입력하고 Simulate.
   4. 모델 연결 시 → BE /simulate가 준 (T,N,3) 프레임을, 미연결 시 → 로컬 metal_dent
      궤적을 재생 애니메이션한다. 변위 크기를 히트맵('turbo')으로 칠하고, ▶/⏸·Loop·
      타임라인 슬라이더로 제어. (모드 배너로 LIVE/DUMMY 명시.)
+  5. 시뮬 직후 부품별 충격 분석(analysis.py)이 좌측 [분석] 탭에 뜬다 — 부품별
+     최대 변위/임계값/상태(OK·WARN·FAIL) 표 + 3D 마커(부품별 최대 충격 위치,
+     임계 초과 정점 빨간 점). 부품 정의는 자산 sidecar JSON에서 온다.
+  6. 좌측 하단 입력창으로 분석 결과에 대해 질문하면 [챗] 탭에 답이 뜬다 — BE
+     /chat(LLM 또는 rule-based) 경유, 서버 미연결 시 로컬 chat_fallback 즉답.
+
+레이아웃: [좌: 분석/챗 탭 패널] [중: 3D 뷰포트] [우: 컨트롤 패널].
 
 노드 인덱스 일관성: FE도 BE와 동일하게 meshio로 메쉬를 파싱해 vertices/faces를
 얻고, 그 배열 순서대로 렌더링한다. 피킹으로 고른 점은 vertices 배열의 인덱스로
 환산되며, Simulate 시 "원본 파일 바이트"를 그대로 보내므로 BE가 같은 순서로
-재파싱 → impact_node가 정확히 일치한다.
+재파싱 → impact_node가 정확히 일치한다. 허블 자산의 components.json vertex_range도
+같은 이유로 FE/BE 어느 쪽에서든 유효하다.
 """
 
 from __future__ import annotations
@@ -21,23 +29,34 @@ import os
 
 os.environ.setdefault("QT_API", "pyside6")  # qtpy가 PySide6를 고르도록
 
+import html
 import sys
 
 import meshio
 import numpy as np
 import pyvista as pv
 from pyvistaqt import QtInteractor
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
+import analysis
 from api_client import PhysicsClient
+from chat_fallback import fallback_answer
+
+
+def _base_path() -> str:
+    """리소스(VERSION, assets/) 해석 기준 — PyInstaller 번들은 sys._MEIPASS,
+    개발 환경은 스크립트 디렉토리."""
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+def _asset_path(*parts: str) -> str:
+    return os.path.join(_base_path(), *parts)
 
 
 def _read_version() -> str:
-    """버전 문자열을 읽는다. PyInstaller 패키징 시 번들된 VERSION(sys._MEIPASS),
-    개발 환경에선 스크립트 옆 VERSION을 사용 (CI가 빌드마다 patch를 올린다)."""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    """버전 문자열을 읽는다 (CI가 빌드마다 patch를 올린다)."""
     try:
-        with open(os.path.join(base, "VERSION"), encoding="utf-8") as f:
+        with open(os.path.join(_base_path(), "VERSION"), encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return "dev"
@@ -60,6 +79,22 @@ MODE_STYLES = {
     "loading": ("#f3e5f5", "#6a1b9a"),  # BE 로딩 중 → 로컬 더미
     "dummy": ("#fff3e0", "#e65100"),    # 모델 미연결 → 로컬 더미
 }
+
+# 분석 상태(OK/WARN/FAIL/N/A) → (배경, 글자). 분석 패널 배지·표 상태 셀·3D 마커 공용.
+ANALYSIS_STATUS_STYLES = {
+    "OK": ("#e8f5e9", "#2e7d32"),
+    "WARN": ("#fff3e0", "#e65100"),
+    "FAIL": ("#ffebee", "#c62828"),
+    "N/A": ("#f5f5f5", "#9e9e9e"),
+}
+
+# 기본 시나리오 자산 (fe/assets/ — prep_hubble.py가 생성, NASA public domain).
+ASSET_MESH = "hubble.obj"
+ASSET_COMPONENTS = "hubble.components.json"
+
+# 종료 시 제한 시간 내 못 끝낸 워커 스레드 보관 — QThread가 실행 중에 파괴되면
+# 크래시하므로 프로세스 종료까지 참조를 유지한다 (closeEvent._drain_worker).
+_ORPHAN_WORKERS: list = []
 
 MESH_FILTER = (
     "Mesh (*.vtk *.vtu *.obj *.stl *.ply *.off *.msh *.bdf *.nas *.fem "
@@ -325,14 +360,42 @@ class SimulateWorker(QtCore.QThread):
             self.failed.emit(str(e))
 
 
+class ChatWorker(QtCore.QThread):
+    """blocking /chat 호출을 GUI 스레드 밖에서 실행 (LLM 지연에도 뷰포트 유지).
+
+    SimulateWorker와 같은 패턴. 전송 중 입력을 비활성화해 in-flight 1개만
+    허용하므로 _sim_gen 같은 세대 카운터는 불필요하다 (답변은 질문 시점의
+    분석 요약에 대한 텍스트라 메쉬 교체와 경합하지 않는다).
+    """
+
+    finished_ok = QtCore.Signal(object)  # /chat 응답 dict
+    failed = QtCore.Signal(str)
+
+    def __init__(self, client, question, analysis_summary, history):
+        super().__init__()
+        self.client = client
+        self.question = question
+        self.analysis_summary = analysis_summary
+        self.history = history
+
+    def run(self):
+        try:
+            self.finished_ok.emit(
+                self.client.chat(self.question, self.analysis_summary, self.history)
+            )
+        except Exception as e:  # 네트워크/서버 오류 모두 메시지로 환원
+            self.failed.emit(str(e))
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Physics Impact Simulator v{APP_VERSION}")
-        self.resize(1280, 760)
+        self.resize(1600, 820)
 
         self.client = PhysicsClient()
         self.worker: SimulateWorker | None = None
+        self.chat_worker: ChatWorker | None = None
 
         # 현재 로드된 메쉬 상태
         self.orig_bytes: bytes | None = None
@@ -340,8 +403,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vertices: np.ndarray | None = None
         self.faces: np.ndarray | None = None
         self.impact_node: int | None = None
+        self.components_def: dict | None = None  # 자산 sidecar JSON (없으면 None)
         self._be_ready = False  # BE 모델 준비 완료 → Simulate가 BE로 감
+        self._server_reachable = False  # /health 응답 여부 — 챗 라우팅(BE vs 로컬)용
         self._pick_actor = None
+
+        # 분석/챗 상태
+        self.analysis: analysis.AnalysisResult | None = None
+        self._overlay_actors: list = []  # 분석 3D 마커 — plotter.clear() 시 함께 사라짐
+        self._last_action: dict = {}
+        self.chat_history: list[dict] = []  # [{"role","content"}] — /chat에 최근 6개 전송
+        self._pending_question: str | None = None  # in-flight 챗 질문 (단일 보장)
 
         # 애니메이션 상태
         self.frames: np.ndarray | None = None  # (T,N,3)
@@ -356,8 +428,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._build_ui()
         self.refresh_health()
-        # 시작 시 기본 시나리오(금속 판)를 띄워 BE 없이도 인터랙션을 확인할 수 있게.
-        self._load_scenario("plate")
+        # 시작 시 기본 시나리오(허블 자산, 없으면 금속 판)를 띄워 BE 없이도
+        # 인터랙션을 확인할 수 있게.
+        self._load_scenario(self._scenario_kinds[0])
 
     # ---- UI ----------------------------------------------------------------
     def _build_ui(self):
@@ -365,7 +438,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         root = QtWidgets.QHBoxLayout(central)
 
-        # 좌: 3D 뷰포트
+        # 좌: 분석/챗 탭 패널 (+ 하단 채팅 입력)
+        root.addWidget(self._build_left_panel())
+
+        # 중: 3D 뷰포트
         self.plotter = QtInteractor(central)
         self.plotter.set_background("white")
         self.plotter.show_axes()
@@ -393,10 +469,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_banner.setWordWrap(True)
         form.addWidget(self.mode_banner)
 
-        # 시나리오 선택 (내장 데모 메쉬)
+        # 시나리오 선택 — 허블 자산이 있으면 첫 항목(기본), 없으면 판/캔만
+        # (개발 체크아웃에서 자산 미생성/패키징 누락 시에도 앱은 동작해야 한다).
+        self._scenario_kinds: list[str] = []
+        items: list[str] = []
+        if os.path.isfile(_asset_path("assets", ASSET_MESH)):
+            self._scenario_kinds.append("hubble")
+            items.append("허블 우주망원경 (hubble)")
+        self._scenario_kinds += ["plate", "can"]
+        items += ["금속 판 (plate)", "금속 캔 (can)"]
         self.scenario_combo = QtWidgets.QComboBox()
-        self.scenario_combo.addItems(["금속 판 (plate)", "금속 캔 (can)"])
-        self.scenario_combo.currentIndexChanged.connect(self._on_scenario_changed)
+        self.scenario_combo.addItems(items)
+        # activated(사용자 선택)로 연결 — currentIndexChanged와 달리 같은 항목을
+        # 다시 골라도 발화한다 (Load mesh 후 원래 시나리오로 복귀 가능).
+        # 프로그램적 로드(시작/폴백)는 _load_scenario를 직접 부른다.
+        self.scenario_combo.activated.connect(self._on_scenario_changed)
         form.addWidget(self._labeled("Scenario", self.scenario_combo))
 
         self.model_combo = QtWidgets.QComboBox()
@@ -468,6 +555,243 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_label.setStyleSheet("color:#555;")
         form.addWidget(self.log_label)
 
+    def _build_left_panel(self) -> QtWidgets.QWidget:
+        """좌측 패널: [분석]/[챗] 탭 + 탭 밖 하단 고정 채팅 입력줄."""
+        panel = QtWidgets.QWidget()
+        panel.setFixedWidth(340)
+        lay = QtWidgets.QVBoxLayout(panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        self.left_tabs = QtWidgets.QTabWidget()
+        lay.addWidget(self.left_tabs, stretch=1)
+
+        # 탭 0: 분석 — 종합 판정 배지 + 부품별 표 + 선택 부품 상세
+        analysis_tab = QtWidgets.QWidget()
+        alay = QtWidgets.QVBoxLayout(analysis_tab)
+        self.analysis_summary = QtWidgets.QLabel()
+        self.analysis_summary.setWordWrap(True)
+        alay.addWidget(self.analysis_summary)
+        self.analysis_table = QtWidgets.QTableWidget(0, 4)
+        self.analysis_table.setHorizontalHeaderLabels(["부품", "최대 변위", "임계값", "상태"])
+        self.analysis_table.horizontalHeader().setSectionResizeMode(
+            0, QtWidgets.QHeaderView.Stretch
+        )
+        self.analysis_table.verticalHeader().setVisible(False)
+        self.analysis_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.analysis_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.analysis_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.analysis_table.itemSelectionChanged.connect(self._on_analysis_row_selected)
+        alay.addWidget(self.analysis_table, stretch=1)
+        self.analysis_detail = QtWidgets.QLabel("")
+        self.analysis_detail.setWordWrap(True)
+        self.analysis_detail.setStyleSheet("color:#555;")
+        alay.addWidget(self.analysis_detail)
+        self.left_tabs.addTab(analysis_tab, "분석")
+
+        # 탭 1: 챗 — 대화 뷰 (질문 전송 시 이 탭으로 자동 전환)
+        chat_tab = QtWidgets.QWidget()
+        clay = QtWidgets.QVBoxLayout(chat_tab)
+        self.chat_view = QtWidgets.QTextBrowser()
+        self.chat_view.setOpenExternalLinks(False)
+        clay.addWidget(self.chat_view)
+        self.left_tabs.addTab(chat_tab, "챗")
+
+        # 하단 입력줄 — 탭 밖이라 어느 탭에서든 보인다
+        row = QtWidgets.QHBoxLayout()
+        self.chat_input = QtWidgets.QLineEdit()
+        self.chat_input.setPlaceholderText("분석 결과에 대해 질문…")
+        self.chat_input.returnPressed.connect(self.on_chat_send)
+        row.addWidget(self.chat_input, stretch=1)
+        self.chat_send_btn = QtWidgets.QPushButton("전송")
+        self.chat_send_btn.clicked.connect(self.on_chat_send)
+        row.addWidget(self.chat_send_btn)
+        lay.addLayout(row)
+
+        self._reset_analysis_panel()
+        return panel
+
+    # ---- 분석 패널/오버레이 --------------------------------------------------
+    def _reset_analysis_panel(self):
+        """메쉬 교체 시 분석 상태 초기화 (챗 히스토리는 유지 — 답변은 질문
+        시점의 분석 기준이라 그대로 읽어도 유효)."""
+        self.analysis = None
+        self.analysis_summary.setText("시뮬레이션 후 분석 결과가 표시됩니다.")
+        self.analysis_summary.setStyleSheet(
+            "background:#f5f5f5; color:#555; padding:6px; border-radius:4px;"
+        )
+        self.analysis_table.setRowCount(0)
+        self.analysis_detail.setText("")
+
+    def _update_analysis_panel(self, result: analysis.AnalysisResult):
+        bg, fg = ANALYSIS_STATUS_STYLES.get(result.verdict, ANALYSIS_STATUS_STYLES["N/A"])
+        mode_txt = "LIVE" if result.sim_mode == "live" else "DUMMY"
+        extras = ""
+        if result.single_frame:
+            extras += " · 단일 프레임(속도 지표 없음)"
+        if result.fallback_whole_mesh:
+            extras += " · 부품 정의 없음(전체 메쉬)"
+        self.analysis_summary.setText(
+            f"종합 판정: {result.verdict} — {result.scenario} · {mode_txt}{extras}\n"
+            f"최대 변위 {result.overall_max_disp:.4g} @ 노드 #{result.overall_max_node}"
+        )
+        self.analysis_summary.setStyleSheet(
+            f"background:{bg}; color:{fg}; padding:6px; border-radius:4px; font-weight:bold;"
+        )
+
+        self.analysis_table.setRowCount(len(result.components))
+        for i, c in enumerate(result.components):
+            cells = [c.name, f"{c.max_disp:.4g}", f"{c.threshold:.4g}", c.status]
+            for j, text in enumerate(cells):
+                item = QtWidgets.QTableWidgetItem(text)
+                if j == 3:
+                    sbg, sfg = ANALYSIS_STATUS_STYLES.get(c.status, ANALYSIS_STATUS_STYLES["N/A"])
+                    item.setBackground(QtGui.QColor(sbg))
+                    item.setForeground(QtGui.QColor(sfg))
+                self.analysis_table.setItem(i, j, item)
+        self.analysis_detail.setText("행을 선택하면 부품 상세가 표시됩니다.")
+
+    def _on_analysis_row_selected(self):
+        if self.analysis is None:
+            return
+        row = self.analysis_table.currentRow()
+        if not 0 <= row < len(self.analysis.components):
+            return
+        c = self.analysis.components[row]
+        lines = [
+            f"{c.name} ({c.component_id}) — {c.status}",
+            f"정점 {c.num_vertices}개 · 임계 초과 {len(c.over_indices)}개",
+            f"최대 변위 {c.max_disp:.4g} (임계값 대비 {c.ratio:.2f}배) @ 노드 #{c.max_disp_node}",
+            f"충격 점수 {c.max_score:.1f}/100",
+        ]
+        if c.material:
+            lines.append(f"재질: {c.material}")
+        if c.notes:
+            lines.append(c.notes)
+        self.analysis_detail.setText("\n".join(lines))
+
+    def _show_analysis_overlays(self, result: analysis.AnalysisResult):
+        """분석 3D 마커를 애니메이션 메쉬 위에 추가.
+
+        위치는 정착 상태(frames[-1]) 기준 — 애니메이션이 그 상태로 끝나므로
+        루프 재생 중 표면이 일시적으로 마커와 어긋나는 것은 감수한다(데모 절충).
+        스칼라는 쓰지 않는다(단색만) — anim 메쉬의 |displacement| 스칼라바와
+        충돌을 피하기 위해. 모든 마커는 pickable=False로 피킹을 방해하지 않는다.
+        """
+        if result is None or self.frames is None:
+            return
+        settled = self.frames[-1]
+
+        # 임계 초과 정점 (전 부품 합산) — 빨간 점
+        over_groups = [c.over_indices for c in result.components if len(c.over_indices)]
+        if over_groups:
+            over = np.unique(np.concatenate(over_groups))
+            actor = self.plotter.add_points(
+                settled[over], color="#c62828", point_size=7,
+                render_points_as_spheres=True, name="analysis_over",
+                pickable=False, reset_camera=False,
+            )
+            self._overlay_actors.append(actor)
+
+        # 부품별 최대 충격 위치 마커+라벨 (상태별 색). 라벨 텍스트는 ASCII
+        # component_id를 쓴다 — VTK 기본 폰트에 한글 글리프가 없어 깨진다.
+        for status in ("FAIL", "WARN", "OK"):
+            comps = [c for c in result.components if c.status == status and c.max_disp_node >= 0]
+            if not comps:
+                continue
+            _, color = ANALYSIS_STATUS_STYLES[status]
+            pts = settled[[c.max_disp_node for c in comps]]
+            self._overlay_actors.append(self.plotter.add_points(
+                pts, color=color, point_size=13, render_points_as_spheres=True,
+                name=f"analysis_max_{status}", pickable=False, reset_camera=False,
+            ))
+            self._overlay_actors.append(self.plotter.add_point_labels(
+                pts, [f"{c.component_id}: {c.status}" for c in comps],
+                name=f"analysis_labels_{status}", show_points=False,
+                font_size=12, text_color=color, shape_color="white",
+                shape_opacity=0.75, always_visible=True,
+            ))
+        self.plotter.render()
+
+    def _clear_overlays(self, already_cleared: bool = False):
+        """분석 마커 제거. plotter.clear()가 이미 전체 액터를 지운 경우
+        리스트만 리셋한다 (clear 지점마다 호출해 stale 참조를 막는다)."""
+        if not already_cleared:
+            for actor in self._overlay_actors:
+                self.plotter.remove_actor(actor)
+        self._overlay_actors = []
+
+    # ---- 챗 ------------------------------------------------------------------
+    def on_chat_send(self):
+        question = self.chat_input.text().strip()
+        if not question:
+            return
+        if self.chat_worker is not None and self.chat_worker.isRunning():
+            return  # 입력 비활성화로 도달하지 않지만 방어
+        self.chat_input.clear()
+        self.left_tabs.setCurrentIndex(1)  # 챗 탭으로 전환
+        self._append_chat("user", question)
+
+        summary = self.analysis.to_summary_json() if self.analysis is not None else {}
+        # 서버 도달 가능하면 /chat(LLM 또는 서버측 폴백), 아니면 로컬 폴백 즉답.
+        # 챗은 mesh 모델 준비(_be_ready)와 무관 — 서버 생존 여부만 본다.
+        if self._server_reachable:
+            self._pending_question = question
+            self._set_chat_enabled(False)
+            self.chat_worker = ChatWorker(
+                self.client, question, summary, self.chat_history[-6:]
+            )
+            self.chat_worker.finished_ok.connect(self._on_chat_reply)
+            self.chat_worker.failed.connect(self._on_chat_failed)
+            self.chat_worker.start()
+        else:
+            answer = fallback_answer(question, summary)
+            self._append_chat("assistant", answer, tag="규칙·로컬")
+            self._push_chat_history(question, answer)
+
+    def _on_chat_reply(self, resp: dict):
+        self._set_chat_enabled(True)
+        question, self._pending_question = self._pending_question, None
+        answer = str(resp.get("answer", "")).strip() or "(빈 응답)"
+        tag = "LLM" if resp.get("mode") == "llm" else "규칙"
+        self._append_chat("assistant", answer, tag=tag)
+        if resp.get("error"):
+            self._log(f"chat: LLM 실패로 규칙 폴백 ({resp['error'][:80]})")
+        if question:
+            self._push_chat_history(question, answer)
+
+    def _on_chat_failed(self, msg: str):
+        # BE 도달 실패 → 로컬 폴백으로 강등. 요약은 워커가 들고 있는 "질문 시점"
+        # 스냅샷을 쓴다 — in-flight 중 메쉬 교체로 self.analysis가 바뀌어도 무관.
+        self._set_chat_enabled(True)
+        question, self._pending_question = self._pending_question, None
+        summary = self.chat_worker.analysis_summary if self.chat_worker is not None else {}
+        answer = fallback_answer(question or "", summary)
+        self._append_chat("assistant", answer, tag="규칙·로컬")
+        self._log(f"chat: 서버 호출 실패 → 로컬 폴백 ({msg[:80]})")
+        if question:
+            self._push_chat_history(question, answer)
+
+    def _set_chat_enabled(self, enabled: bool):
+        self.chat_input.setEnabled(enabled)
+        self.chat_send_btn.setEnabled(enabled)
+        self.chat_send_btn.setText("전송" if enabled else "…")
+
+    def _append_chat(self, role: str, text: str, tag: str | None = None):
+        body = html.escape(text).replace("\n", "<br>")
+        if role == "user":
+            prefix = '<b style="color:#1a5276;">나</b>'
+        else:
+            tag_html = (
+                f' <span style="color:#e65100; font-size:11px;">[{tag}]</span>' if tag else ""
+            )
+            prefix = f'<b style="color:#2e7d32;">답변</b>{tag_html}'
+        self.chat_view.append(f'<div style="margin:4px 0;">{prefix}<br>{body}</div>')
+
+    def _push_chat_history(self, question: str, answer: str):
+        self.chat_history.append({"role": "user", "content": question})
+        self.chat_history.append({"role": "assistant", "content": answer})
+        del self.chat_history[:-20]  # 메모리 상한 (서버 전송은 최근 6개만)
+
     def _labeled(self, text: str, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
         box = QtWidgets.QWidget()
         lay = QtWidgets.QHBoxLayout(box)
@@ -495,9 +819,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status("down", f"server unreachable: {e}")
             self.model_combo.clear()
             self._be_ready = False
+            self._server_reachable = False  # 챗도 로컬 폴백으로
             self._set_mode("dummy", "⚠ DUMMY 모드 · 모델 미연결 — Simulate는 로컬 더미 반응")
             return
 
+        # 응답이 왔으면(503 포함) 서버 자체는 살아있다 — 챗은 /chat로 보낸다.
+        self._server_reachable = True
         status = health.get("status", "unknown")
         self._set_status(status, f"{status} @ {self.client.base_url}")
 
@@ -548,9 +875,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self._stop_play()
-        self._sim_gen += 1  # 진행 중 worker 결과 무효화
+        self._invalidate_sim()  # 진행 중 worker 결과 무효화 + Simulate 버튼 복구
         self.frames = None
         self.impact_node = None
+        self.components_def = None  # 사용자 메쉬는 부품 정의 없음 → 전체 메쉬 분석
+        self._reset_analysis_panel()
         self.node_label.setText("Impact node: — (click a node)")
         self.mesh_label.setText(
             f"{os.path.basename(path)}  —  {len(self.vertices)} nodes, "
@@ -562,23 +891,61 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log("mesh loaded — click a node to set impact point.")
 
     def _on_scenario_changed(self, index: int):
-        self._load_scenario("can" if index == 1 else "plate")
+        if 0 <= index < len(self._scenario_kinds):
+            self._load_scenario(self._scenario_kinds[index])
 
     def _load_scenario(self, kind: str):
-        """내장 시나리오 메쉬(금속 판/캔)를 로드. 기본 충격점을 미리 선택."""
+        """내장 시나리오 메쉬(허블 자산/금속 판/캔)를 로드. 기본 충격점을 미리 선택."""
         self._stop_play()
-        self._sim_gen += 1  # 진행 중 worker 결과 무효화
-        if kind == "can":
+        self._invalidate_sim()  # 진행 중 worker 결과 무효화 + Simulate 버튼 복구
+        self.components_def = None
+        default_radius = 0.0  # 0 = auto (bbox 비례)
+        if kind == "hubble":
+            path = _asset_path("assets", ASSET_MESH)
+            try:
+                with open(path, "rb") as f:
+                    self.orig_bytes = f.read()
+                # 원본 파일 바이트를 그대로 BE에 보내므로(재파싱 동일) 인덱스 일치.
+                self.vertices, self.faces, self.file_format = load_mesh(path)
+            except Exception as e:
+                # 자산 손상/유실 — 판 시나리오로 강등 (앱은 계속 동작).
+                # 콤보 표시도 plate로 동기화해 UI 상태 어긋남을 막는다.
+                idx = self._scenario_kinds.index("plate")
+                self.scenario_combo.blockSignals(True)
+                self.scenario_combo.setCurrentIndex(idx)
+                self.scenario_combo.blockSignals(False)
+                self._load_scenario("plate")
+                self._log(f"허블 자산 로드 실패({e}) — 금속 판으로 대체")
+                return
+            self.components_def = analysis.load_components(
+                _asset_path("assets", ASSET_COMPONENTS)
+            )
+            center = 0
+            if self.components_def is not None:
+                # sidecar 값 타입 오류도 '자산 손상 시 강등' 계약대로 기본값 처리.
+                try:
+                    center = int(self.components_def.get("default_impact_node") or 0)
+                    default_radius = float(self.components_def.get("default_radius") or 0.0)
+                except (TypeError, ValueError):
+                    center, default_radius = 0, 0.0
+            center = min(max(0, center), len(self.vertices) - 1)
+            label = "허블 우주망원경 (NASA)"
+        elif kind == "can":
             self.vertices, self.faces = make_can_mesh()
             center = (CAN_NH // 2) * CAN_NTHETA  # 중간 높이, θ=0
             label = f"금속 캔 (cylinder {CAN_NTHETA}×{CAN_NH})"
+            self.file_format = "vtk"
+            self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
         else:  # plate
             self.vertices, self.faces = make_plate_mesh()
             center = (PLATE_N // 2) * PLATE_N + (PLATE_N // 2)
             label = f"금속 판 ({PLATE_N}×{PLATE_N} grid)"
-        self.file_format = "vtk"
-        self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
+            self.file_format = "vtk"
+            self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
         self.frames = None
+        # 시나리오별 권장 충격 반경 (자산 JSON bake 값) — 0이면 auto.
+        self.radius.setValue(default_radius)
+        self._reset_analysis_panel()
 
         self.mesh_label.setText(
             f"{label} — {len(self.vertices)} nodes, {len(self.faces)} faces"
@@ -592,10 +959,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log(f"{label} 로드됨 — 노드를 클릭해 충격점을 바꾸고 Simulate.")
 
     def _render_original(self, reset_camera: bool = False):
-        """원본 메쉬만 렌더 (애니메이션/pick highlight 제거)."""
+        """원본 메쉬만 렌더 (애니메이션/pick highlight/분석 마커 제거)."""
         self.plotter.clear()
         self.anim_poly = None
         self._pick_actor = None
+        self._clear_overlays(already_cleared=True)  # clear()가 이미 액터를 지움
         poly = to_polydata(self.vertices, self.faces)
         self.plotter.add_mesh(
             poly, color="#9ecae1", show_edges=True, edge_color="#3182bd",
@@ -606,6 +974,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _enable_picking(self):
         # 표면 위 클릭 지점 → 최근접 정점 인덱스로 환산.
+        # pyvista 최신 버전은 중복 enable을 PyVistaPickingError로 막는다 —
+        # (시뮬/리셋마다 재호출되므로) 기존 피킹을 먼저 해제한다.
+        try:
+            self.plotter.disable_picking()
+        except Exception:
+            pass
         self.plotter.enable_point_picking(
             callback=self._on_pick, show_message=False, left_clicking=True,
             use_picker=True,
@@ -637,6 +1011,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pick_actor = self.plotter.add_mesh(sphere, color="#e6550d", name="impact")
 
     # ---- 시뮬레이션 / 애니메이션 -------------------------------------------
+    def _invalidate_sim(self):
+        """진행 중 시뮬 결과 무효화 + Simulate 버튼 복구.
+
+        메쉬 교체/리셋 시 stale worker 결과는 gen 체크로 무시되므로, 버튼을
+        바로 되살려도 안전하다 (안 살리면 이전 요청 타임아웃까지 잠긴다)."""
+        self._sim_gen += 1
+        self.simulate_btn.setEnabled(True)
+
     def on_simulate(self):
         if self.vertices is None or self.orig_bytes is None:
             QtWidgets.QMessageBox.information(self, "No mesh", "Load a mesh first.")
@@ -652,6 +1034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         if self.radius.value() > 0:
             action["radius"] = self.radius.value()
+        self._last_action = action  # 분석 요약(action 표시)용
 
         self._stop_play()
         # BE ready면 /simulate, 아니면 로컬 metal_dent. 연결 상태는 startup/Refresh 기준 —
@@ -696,11 +1079,19 @@ class MainWindow(QtWidgets.QMainWindow):
         frames = np.asarray(frames)
         self.frames = frames
         self.faces = np.asarray(faces)
-        self.disp = np.linalg.norm(frames - frames[0], axis=2)  # (T,N)
+        # 변위 기준점: T==1이면 frames[0]이 이미 변형 상태 → 원본 대비
+        # (analysis.compute_analysis와 동일 규칙 — 히트맵/분석 수치 일관).
+        if len(frames) == 1 and self.vertices is not None \
+                and self.vertices.shape == frames.shape[1:]:
+            rest = np.asarray(self.vertices, dtype=np.float64)
+        else:
+            rest = frames[0]
+        self.disp = np.linalg.norm(frames - rest[None], axis=2)  # (T,N)
         self.vmax = float(self.disp.max()) or 1.0
 
         self.plotter.clear()
         self._pick_actor = None
+        self._clear_overlays(already_cleared=True)  # clear()가 이미 액터를 지움
         self.anim_poly = to_polydata(frames[0], self.faces)
         self.anim_poly["displacement"] = self.disp[0]
         self.plotter.add_mesh(
@@ -722,6 +1113,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         tag = " (로컬 metal_dent)" if dummy else ""
         self._log(f"simulate 완료{tag} — {T} frames, max|disp|={self.vmax:.4f}")
+
+        # 부품별 충격 분석 — LIVE/DUMMY 동일 경로(frames는 이미 FE 메모리에 있다).
+        # 동기 계산이지만 (T,N) 벡터 연산 몇 번이라 로컬 metal_dent 시뮬(이미 GUI
+        # 스레드에서 돈다)보다 저렴 — 워커 불필요.
+        self.analysis = analysis.compute_analysis(
+            frames, self.vertices, self._last_action,
+            self.components_def, "dummy" if dummy else "live",
+        )
+        self._update_analysis_panel(self.analysis)
+        self._show_analysis_overlays(self.analysis)
         if T > 1:
             self._start_play()
 
@@ -794,7 +1195,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.vertices is None:
             return
         self._stop_play()
-        self._sim_gen += 1  # 진행 중 worker 결과 무효화
+        self._invalidate_sim()  # 진행 중 worker 결과 무효화 + Simulate 버튼 복구
         self.frames = None
         self._render_original(reset_camera=False)
         if self.impact_node is not None:
@@ -806,12 +1207,26 @@ class MainWindow(QtWidgets.QMainWindow):
     def _log(self, msg: str):
         self.log_label.setText(msg)
 
+    def _drain_worker(self, worker, timeout_ms: int = 3000):
+        """워커 종료를 상한 시간까지만 대기. 무한 wait()는 네트워크 타임아웃
+        (시뮬 30s/챗 60s)만큼 창 닫기를 얼리므로, 초과 시 시그널만 끊고
+        모듈 참조에 보관해(파괴 방지) 프로세스 종료에 맡긴다."""
+        if worker is None or not worker.isRunning():
+            return
+        if not worker.wait(timeout_ms):
+            try:
+                worker.finished_ok.disconnect()
+                worker.failed.disconnect()
+            except (TypeError, RuntimeError):
+                pass  # 이미 끊겼거나 연결 없음
+            _ORPHAN_WORKERS.append(worker)  # GC로 QThread가 파괴되지 않게 유지
+
     def closeEvent(self, event):
-        # 애니메이션 타이머·시뮬 스레드를 정리하고 VTK 렌더 윈도우를 명시적으로
+        # 애니메이션 타이머·시뮬/챗 스레드를 정리하고 VTK 렌더 윈도우를 명시적으로
         # 닫는다 — Windows 종료 중 implicit finalize 시의 access violation/hang 방지.
         self.anim_timer.stop()
-        if self.worker is not None and self.worker.isRunning():
-            self.worker.wait()
+        self._drain_worker(self.worker)
+        self._drain_worker(self.chat_worker)
         self.plotter.close()
         super().closeEvent(event)
 

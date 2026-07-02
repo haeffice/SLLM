@@ -40,12 +40,14 @@ def make_grid(n: int = 11) -> tuple[np.ndarray, np.ndarray]:
     return verts.astype(np.float64), np.asarray(faces, dtype=np.int64)
 
 
-def _post_predict(payload: dict) -> dict:
+def _post_json(path: str, payload: dict) -> dict:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"{BE_URL}/predict", data=data, headers={"Content-Type": "application/json"}
+        f"{BE_URL}{path}", data=data, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    # 60s: /chat이 서버측 LLM 타임아웃(CHAT_LLM_TIMEOUT 기본 30s)을 다 쓰고
+    # in-band 폴백으로 응답하는 경우보다 길어야 한다.
+    with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -71,9 +73,35 @@ def main() -> int:
         print(f"FAIL: cannot reach {BE_URL} — is the server running? ({e})")
         return 1
 
+    # --- /chat (rule-based 폴백 — CHAT_LLM_* env 없이도 CI에서 결정적) ---------
+    try:
+        empty = _post_json("/chat", {"question": "괜찮아?", "analysis": {}})
+        assert empty.get("success") is True and empty.get("answer"), f"/chat empty: {empty}"
+        assert empty.get("mode") in ("fallback", "llm"), f"unexpected mode: {empty}"
+
+        sample_analysis = {
+            "components": [
+                {"id": "panel", "name": "패널", "max_disp": 0.05, "threshold": 0.03,
+                 "ratio": 1.67, "status": "FAIL", "max_node": 7},
+            ],
+        }
+        chat = _post_json("/chat", {"question": "어디가 파손됐어?", "analysis": sample_analysis})
+        assert chat.get("success") is True and chat.get("answer"), f"/chat: {chat}"
+        # 폴백 모드면 결정적으로 FAIL 부품명이 답에 들어간다 (LLM 모드는 내용 미보장).
+        if chat.get("mode") == "fallback":
+            assert "패널" in chat["answer"], f"fallback answer missing component: {chat}"
+        print(f"[chat] mode={chat.get('mode')} — answer ok")
+    except urllib.error.HTTPError as e:
+        print(f"FAIL: /chat HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
+        return 1
+    except (urllib.error.URLError, TimeoutError) as e:
+        # LLM env가 걸린 서버가 외부 API에 매달리면 여기로 온다 (read timeout 포함).
+        print(f"FAIL: /chat unreachable/timeout — {e}")
+        return 1
+
     # --- /predict ------------------------------------------------------------
     try:
-        out = _post_predict(payload)
+        out = _post_json("/predict", payload)
     except urllib.error.HTTPError as e:
         print(f"FAIL: /predict HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
         return 1

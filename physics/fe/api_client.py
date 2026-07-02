@@ -54,6 +54,27 @@ class PhysicsClient:
             raise RuntimeError(f"predict failed [{r.status_code}]: {_detail(r)}")
         return base64.b64decode(r.json()["result_mesh_base64"])
 
+    def chat(
+        self,
+        question: str,
+        analysis: dict,
+        history: list[dict] | None = None,
+        timeout: float = 60.0,
+    ) -> dict:
+        """질문 + 분석 요약 → /chat 응답 dict {"answer","mode","model","error",...}.
+
+        실패 시 RuntimeError. LLM 지연을 감안해 simulate보다 긴 timeout 기본값.
+        """
+        payload = {
+            "question": question,
+            "analysis": analysis or {},
+            "history": history or [],
+        }
+        r = requests.post(f"{self.base_url}/chat", json=payload, timeout=timeout)
+        if r.status_code != 200:
+            raise RuntimeError(f"chat failed [{r.status_code}]: {_detail(r)}")
+        return r.json()
+
     def simulate(
         self,
         mesh_bytes: bytes,

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "asset": "hubble.obj",
+  "display_name": "허블 우주망원경",
+  "source": "https://raw.githubusercontent.com/nasa/NASA-3D-Resources/11ebb4ee043715aefbba6aeec8a61746fad67fa7/3D%20Printing/Hubble%2025th%20Anniversary%20Model/ (commit 11ebb4ee043715aefbba6aeec8a61746fad67fa7, NASA public domain)",
+  "normalized": "centered at origin, bbox diagonal = 2.0",
+  "default_impact_node": 4018,
+  "default_radius": 0.15,
+  "components": [
+    {
+      "id": "main_body",
+      "name": "본체 경통",
+      "material": "알루미늄 외피",
+      "fragility": "low",
+      "notes": "구조 강성이 높은 원통 경통 — 임계값이 가장 높다.",
+      "damage_threshold": 0.1,
+      "warn_ratio": 0.7,
+      "vertex_range": [
+        0,
+        2747
+      ]
+    },
+    {
+      "id": "solar_panels",
+      "name": "태양전지판",
+      "material": "실리콘 셀 패널",
+      "fragility": "high",
+      "notes": "얇은 패널 — 점 충격에 셀 균열이 쉽게 발생, 임계값 최저.",
+      "damage_threshold": 0.03,
+      "warn_ratio": 0.7,
+      "vertex_range": [
+        2747,
+        5119
+      ]
+    },
+    {
+      "id": "radio_dishes",
+      "name": "고이득 안테나",
+      "material": "접시형 반사판",
+      "fragility": "high",
+      "notes": "접시 곡면 변형 시 지향성 상실 — 임계값 낮음.",
+      "damage_threshold": 0.04,
+      "warn_ratio": 0.7,
+      "vertex_range": [
+        5119,
+        7521
+      ]
+    },
+    {
+      "id": "cover_hatch",
+      "name": "개구부 해치",
+      "material": "힌지 결합 덮개",
+      "fragility": "medium",
+      "notes": "힌지 이음새가 약점 — 변형 시 개폐 불능.",
+      "damage_threshold": 0.07,
+      "warn_ratio": 0.7,
+      "vertex_range": [
+        7521,
+        8067
+      ]
+    },
+    {
+      "id": "body_coupler",
+      "name": "동체 커플러",
+      "material": "결합 링",
+      "fragility": "medium",
+      "notes": "경통-후방 장비부 결합 링 — 이음새 어긋남 주의.",
+      "damage_threshold": 0.07,
+      "warn_ratio": 0.7,
+      "vertex_range": [
+        8067,
+        8806
+      ]
+    }
+  ]
+}

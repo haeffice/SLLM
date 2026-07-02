@@ -17,6 +17,13 @@ MESH_MODEL_DEFAULT   model id used when `/predict` is called without `?model=`
                      기본 cpu. dummy는 torch 의존이 없어 문자열을 그대로
                      전달 — 실제 모델 추가 시 그 모델 load()에서
                      torch.device(device)로 변환한다.
+
+CHAT_LLM_BASE_URL    /chat이 쓸 OpenAI-호환 API base
+                     (예: https://api.openai.com/v1, http://127.0.0.1:11434/v1)
+CHAT_LLM_MODEL       모델명 (예: gpt-4o-mini, llama3). BASE_URL과 MODEL 둘 다
+                     있어야 LLM 모드 — 하나라도 없으면 rule-based 폴백.
+CHAT_LLM_API_KEY     Bearer 키 (로컬 서버는 생략 가능)
+CHAT_LLM_TIMEOUT     LLM 호출 타임아웃(초), 기본 30
 """
 
 from __future__ import annotations
@@ -62,6 +69,24 @@ def device_for(model_id: str) -> str:
     if explicit:  # 빈 문자열도 cpu로 폴백 (seld/be/llm.py 규약과 동일)
         return explicit
     return "cpu"
+
+
+def chat_llm_config() -> dict | None:
+    """/chat용 OpenAI-호환 LLM 설정. base URL/모델 미설정 시 None → rule-based 폴백."""
+    base_url = os.environ.get("CHAT_LLM_BASE_URL", "").strip().rstrip("/")
+    model = os.environ.get("CHAT_LLM_MODEL", "").strip()
+    if not base_url or not model:
+        return None
+    try:
+        timeout = float(os.environ.get("CHAT_LLM_TIMEOUT", "30"))
+    except ValueError:
+        timeout = 30.0
+    return {
+        "base_url": base_url,
+        "api_key": os.environ.get("CHAT_LLM_API_KEY", "").strip(),
+        "model": model,
+        "timeout": timeout,
+    }
 
 
 def load_one(model_id: str) -> BaseMeshPredictor:

@@ -28,7 +28,9 @@ be/
 │   ├── base.py          # BaseMeshPredictor (인터페이스)
 │   └── dummy/model.py   # DummyLinearDeformer
 ├── utils/mesh_handler.py# meshio load/write (Base64↔vertices/faces)
+├── utils/chat_fallback.py# /chat rule-based 폴백 (FE fe/chat_fallback.py와 미러)
 ├── routers/predict.py   # POST /predict + Pydantic 스키마
+├── routers/chat.py      # POST /chat — LLM(OpenAI-호환) QA + in-band 폴백
 ├── smoke_test.py        # end-to-end 검증 스크립트
 ├── requirements.txt
 └── run.sh               # 0.0.0.0:9003
@@ -47,6 +49,10 @@ pip install -r requirements.txt
 | `MESH_MODEL_DEFAULT` | `dummy` | `/predict?model=` 미지정 시 기본 |
 | `<MODEL_ID>_DEVICE` | `cpu` | 모델별 장치 (예: `DUMMY_DEVICE=cpu`) |
 | `BE_HOST` / `BE_PORT` | `0.0.0.0` / `9003` | 서버 바인딩 |
+| `CHAT_LLM_BASE_URL` | (없음) | `/chat`용 OpenAI-호환 API base (예: `https://api.openai.com/v1`, `http://127.0.0.1:11434/v1`) |
+| `CHAT_LLM_MODEL` | (없음) | 모델명 (예: `gpt-4o-mini`, `llama3`) — BASE_URL과 둘 다 있어야 LLM 모드 |
+| `CHAT_LLM_API_KEY` | (없음) | Bearer 키 (로컬 서버는 생략 가능) |
+| `CHAT_LLM_TIMEOUT` | `30` | LLM 호출 타임아웃(초) |
 
 ## API
 
@@ -107,9 +113,30 @@ predict를 `(1,N,3)`로 감싸 그대로 동작한다.
 > 모델 교체: `models/<id>/`에 `BaseMeshPredictor` 상속(시퀀스면 `simulate` 오버라이드) +
 > `config.py` 등록만으로 `/predict`·`/simulate` 둘 다 새 모델로 서빙된다.
 
+### `POST /chat`
+
+시뮬레이션 **분석 결과에 대한 QA**. FE가 만든 압축 분석 요약(JSON)과 질문을 받아,
+`CHAT_LLM_*` env가 설정돼 있으면 **OpenAI-호환** `chat/completions`로 답하고
+(`mode: "llm"`), 미설정/호출 실패 시 rule-based 답변으로 강등한다(`mode: "fallback"`,
+`error`에 사유). **LLM 실패는 5xx가 아니라 in-band 폴백** — 데모가 외부 API 상태에
+좌우되지 않는다. mesh 모델 레지스트리와 무관해 모델 로딩 중에도 동작한다.
+
+요청/응답 (JSON):
+```json
+{"question": "태양전지판 괜찮아?", "analysis": {"components": [...]},
+ "history": [{"role": "user", "content": "..."}]}
+```
+```json
+{"success": true, "answer": "...", "mode": "llm", "model": "gpt-4o-mini", "error": null}
+```
+
+rule-based 엔진(`utils/chat_fallback.py`)은 FE `fe/chat_fallback.py`와 **바이트 단위
+미러** — 서버 미연결 시 FE가 로컬에서 같은 답을 낸다. 한쪽만 수정 금지.
+`/health` 응답의 `chat.llm_configured`로 현재 모드를 확인할 수 있다.
+
 ## 검증
 
 서버를 띄운 뒤:
 ```bash
-python smoke_test.py     # 샘플 그리드 → /predict → 변형 검증 (OK ✓)
+python smoke_test.py     # 샘플 그리드 → /chat 폴백 + /predict 변형 검증 (OK ✓)
 ```
