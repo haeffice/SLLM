@@ -40,6 +40,7 @@ _LINK_KEYWORDS = ("통신", "링크", "안테나", "데시벨", "antenna", "link
 _OPTICS_KEYWORDS = ("광축", "광학", "스트렐", "상 품질", "파면", "strehl", "optic")
 _VIBRATION_KEYWORDS = ("진동", "정착", "지터", "감쇠", "링잉", "jitter", "settl", "vibrat")
 _STRAIN_KEYWORDS = ("변형률", "소성", "항복", "탄성", "스트레인", "strain")
+_SCREEN_KEYWORDS = ("액정", "화면", "터치", "스크린", "디스플레이", "screen", "display", "touch")
 
 
 def _fmt(value) -> str:
@@ -90,6 +91,12 @@ def _functional_line(comp: dict) -> str | None:
             f"(파면 오차 {_fmt(func.get('wfe_um'))} μm, 광축 기울기 "
             f"{_fmt(func.get('axis_tilt_arcsec'))}″ / 예산 "
             f"{_fmt(func.get('budget_arcsec'))}″) → {func.get('verdict', '?')}"
+        )
+    if ftype == "screen":
+        return (
+            f"{name}: 표시/터치 불능 면적 "
+            f"{_fmt_pct(func.get('dead_area_frac', 0))} (임계 초과 셀 면적) "
+            f"→ {func.get('verdict', '?')}"
         )
     return None
 
@@ -168,6 +175,10 @@ def _summary(analysis: dict, comps: list[dict]) -> str:
         )
     if comps:
         lines.append("최악 부품 — " + _comp_line(_worst_comp(comps)))
+    act = analysis.get("action") or {}
+    if act.get("mode") == "free_fall":
+        lines.insert(0, f"자유 낙하 시뮬레이션 결과 (높이 {_fmt(act.get('drop_height'))}, "
+                        f"반발계수 {_fmt(act.get('restitution'))}).")
     if analysis.get("single_frame"):
         lines.append("(단일 프레임 결과 — 시간에 따른 속도 지표는 없습니다.)")
     if analysis.get("fallback_whole_mesh"):
@@ -212,6 +223,10 @@ def fallback_answer(question: str, analysis: dict) -> str:
             return answer
     if any(k in q for k in _OPTICS_KEYWORDS):
         answer = _route("광학 상 품질 분석 (파면 오차 → 스트렐 비):", _functional_line, "optical_tube")
+        if answer:
+            return answer
+    if any(k in q for k in _SCREEN_KEYWORDS):
+        answer = _route("액정 손상 분석 (임계 초과 셀 면적 비율):", _functional_line, "screen")
         if answer:
             return answer
     if any(k in q for k in _VIBRATION_KEYWORDS):

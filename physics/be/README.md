@@ -1,17 +1,21 @@
 # Physics Impact Simulator — BE
 
-3D 메쉬 + 충격(action)을 받아 **교체 가능한 mesh-to-mesh 모델**로 변형 결과를
-돌려주는 FastAPI 백엔드. 구조는 `seld/be` · `localization/be`를 미러링한다. 등록 모델:
-`metal_dent`(데모: 시간-시퀀스 dent, 기본값) · `dummy`(단일 프레임 선형 감쇠).
+3D 메쉬 + action을 받아 **교체 가능한 mesh-to-mesh 모델**로 변형 결과를 돌려주는
+FastAPI 백엔드. 구조는 `seld/be` · `localization/be`를 미러링한다. 등록 모델:
+`free_fall`(데모 기본: 자유 낙하 다중 접촉) · `metal_dent`(충격: 시간-시퀀스 dent) ·
+`dummy`(단일 프레임 선형 감쇠).
 
 ## 핵심: Pluggable Model Interface
 
 ```
 models/base.py       BaseMeshPredictor (ABC) — load() / predict() / simulate()
+models/free_fall/    FreeFallSimulator     (자유 낙하 다중 접촉, 기본 모델)
+models/metal_dent/   MetalDentSimulator    (충격 시간-시퀀스 dent)
 models/dummy/        DummyLinearDeformer   (단일 프레임 예시)
-models/metal_dent/   MetalDentSimulator    (시간-시퀀스 데모)
 config.py            REGISTRY + 환경변수 기반 동적 로드 (싱글톤)
 ```
+`free_fall`·`metal_dent`의 궤적 수식은 FE 오프라인 미러(fe/free_fall_sim.py,
+fe/app.py metal_dent_simulate)와 바이트/수식 동일 — 한쪽만 고치면 안 된다.
 
 새 모델 도입 절차 (main.py · routers 무수정):
 1. `models/<id>/model.py`에 `BaseMeshPredictor` 상속 클래스 작성 (`model_id`, `load`, `predict`).
@@ -45,8 +49,8 @@ pip install -r requirements.txt
 
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
-| `MESH_MODEL_ENABLED` | `dummy` | 로드할 모델 id (콤마 구분) |
-| `MESH_MODEL_DEFAULT` | `dummy` | `/predict?model=` 미지정 시 기본 |
+| `MESH_MODEL_ENABLED` | `free_fall,metal_dent,dummy` | 로드할 모델 id (콤마 구분) |
+| `MESH_MODEL_DEFAULT` | `free_fall` | `/predict?model=` 미지정 시 기본 (= 첫 enabled) |
 | `<MODEL_ID>_DEVICE` | `cpu` | 모델별 장치 (예: `DUMMY_DEVICE=cpu`) |
 | `BE_HOST` / `BE_PORT` | `0.0.0.0` / `9003` | 서버 바인딩 |
 | `CHAT_LLM_BASE_URL` | (없음) | `/chat`용 OpenAI-호환 API base (예: `https://api.openai.com/v1`, `http://127.0.0.1:11434/v1`) |
@@ -106,9 +110,16 @@ LOADING/FAILED면 **503** (FE 상태 점: 초록/보라).
   "frames_b64": "<base64 float32 (T,N,3) C-order>" }
 ```
 
-기본 모델 `metal_dent`(MetalDentSimulator)는 절차적 금속 dent 데모 — 영구 소성 dent +
-감쇠 링잉. 단일 프레임 모델(dummy 등)은 `BaseMeshPredictor.simulate` 기본 구현이
-predict를 `(1,N,3)`로 감싸 그대로 동작한다.
+action 키는 모델별로 다르다:
+- **free_fall** (기본): `drop_height`(>0, 기본 1.0) · `restitution`([0,1), 기본 0.3) ·
+  `orientation`([rx,ry,rz]°, 낙하 자세) · `scale` · `frames`(기본 90) · 선택 `radius`.
+  낙하 자세 기준 최저 밴드를 클러스터링해 **여러 접촉점에 dent**를 주고 반발계수로
+  감쇠 바운스한다. `frames[0]`=공중, `frames[-1]`=바닥 정착.
+- **metal_dent** (충격): `impact_node` · `force`([x,y,z]) · `scale` · 선택 `radius` · `frames`.
+
+기본 모델 `free_fall`(FreeFallSimulator)은 절차적 자유 낙하 데모. `metal_dent`는 영구
+소성 dent + 감쇠 링잉. 단일 프레임 모델(dummy 등)은 `BaseMeshPredictor.simulate`
+기본 구현이 predict를 `(1,N,3)`로 감싸 그대로 동작한다.
 
 > 모델 교체: `models/<id>/`에 `BaseMeshPredictor` 상속(시퀀스면 `simulate` 오버라이드) +
 > `config.py` 등록만으로 `/predict`·`/simulate` 둘 다 새 모델로 서빙된다.

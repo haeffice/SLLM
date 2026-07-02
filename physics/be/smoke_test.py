@@ -99,9 +99,28 @@ def main() -> int:
         print(f"FAIL: /chat unreachable/timeout — {e}")
         return 1
 
-    # --- /predict ------------------------------------------------------------
+    # --- /simulate?model=free_fall (자유 낙하 다중 접촉) ----------------------
+    # 기본 모델이 free_fall이므로 낙하 경로를 e2e로 확인. 첫 프레임은 공중(최저
+    # 정점이 drop_height만큼 떠 있음), 마지막은 바닥 정착.
     try:
-        out = _post_json("/predict", payload)
+        ff = _post_json("/simulate?model=free_fall", {
+            "mesh_base64": payload["mesh_base64"], "file_format": FILE_FORMAT,
+            "action": {"drop_height": 1.0, "restitution": 0.3, "frames": 30},
+        })
+        assert ff.get("success") and ff.get("num_frames") == 30, f"free_fall: {ff}"
+        m, n, t = ff["num_faces"], ff["num_vertices"], ff["num_frames"]
+        frames = np.frombuffer(base64.b64decode(ff["frames_b64"]), dtype="<f4").reshape(t, n, 3)
+        z0_min, zlast_min = float(frames[0, :, 2].min()), float(frames[-1, :, 2].min())
+        print(f"[free_fall] T={t} N={n} — airborne z_min={z0_min:.3f}, settled z_min={zlast_min:.3f}")
+        assert abs(z0_min - 1.0) < 1e-2, f"first frame not airborne at h=1: {z0_min}"
+        assert zlast_min > -0.02, f"settled frame punches through floor: {zlast_min}"
+    except urllib.error.HTTPError as e:
+        print(f"FAIL: /simulate free_fall HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
+        return 1
+
+    # --- /predict?model=metal_dent (충격 변형 — 기본 모델과 무관하게 고정) -----
+    try:
+        out = _post_json("/predict?model=metal_dent", payload)
     except urllib.error.HTTPError as e:
         print(f"FAIL: /predict HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
         return 1

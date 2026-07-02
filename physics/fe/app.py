@@ -39,6 +39,7 @@ from pyvistaqt import QtInteractor
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import analysis
+import free_fall_sim
 from api_client import PhysicsClient
 from chat_fallback import fallback_answer
 
@@ -88,19 +89,35 @@ ANALYSIS_STATUS_STYLES = {
     "N/A": ("#f5f5f5", "#9e9e9e"),
 }
 
-# 기본 시나리오 자산 (fe/assets/ — prep_hubble.py가 생성, NASA public domain).
+# 기본 시나리오 자산 (fe/assets/ — prep_*.py가 생성).
 ASSET_MESH = "hubble.obj"
 ASSET_COMPONENTS = "hubble.components.json"
+
+# 자산 시나리오 목록 (kind, mesh 파일, 콤보 표시명) — 파일이 있는 것만 콤보에 뜬다.
+# 첫 항목이 시작 기본 시나리오.
+SCENARIO_ASSETS = [
+    ("hubble", "hubble.obj", "허블 우주망원경 (hubble)"),
+    ("smartphone", "smartphone.obj", "스마트폰 (smartphone)"),
+]
+
+# 낙하 자세 공통 프리셋 (표시명, Euler [rx,ry,rz]°). 자산 sidecar의
+# drop_orientations가 이 뒤에 추가된다.
+DROP_ORIENTATION_PRESETS = [
+    ("그대로", (0.0, 0.0, 0.0)),
+    ("모서리 (대각 45°)", (45.0, 35.264, 0.0)),
+    ("측면 (90°)", (90.0, 0.0, 0.0)),
+]
 
 # 종료 시 제한 시간 내 못 끝낸 워커 스레드 보관 — QThread가 실행 중에 파괴되면
 # 크래시하므로 프로세스 종료까지 참조를 유지한다 (closeEvent._drain_worker).
 _ORPHAN_WORKERS: list = []
 
-# 기능 영향 분석의 허블 실화 앵커 (상세 패널 하단 표시).
+# 기능 영향 분석의 실화 앵커 (상세 패널 하단 표시).
 FUNCTIONAL_ANCHORS = {
     "solar_panel": "실제 허블도 태양전지판 열 플러터 지터로 SM1(1993)에서 어레이를 교체했다.",
     "antenna": "허블 HGA는 빔폭 ~4°의 S-band 접시로 TDRS에 1 Mbps 과학 데이터를 보낸다.",
     "optical_tube": "허블 주경은 2.2 μm 연마 오차만으로 임무가 마비됐던 광학계다.",
+    "screen": "실제 스마트폰도 면·모서리 반복 낙하 시험으로 커버글라스 파손율을 검증한다.",
 }
 
 # 변형률 판정 → 분석 상태 색 매핑.
@@ -119,6 +136,8 @@ def _functional_brief(c: "analysis.ComponentResult") -> str:
     if ftype == "optical_tube":
         s = func.get("strehl", 1.0)
         return f"S={s:.2g}" if s >= 0.001 else "S<0.001"
+    if ftype == "screen":
+        return f"불능 {func.get('dead_area_frac', 0) * 100:.0f}%"
     rigid = extras.get("rigid")
     if rigid and rigid.get("rotation_deg", 0) > 0.01:
         return f"회전 {rigid['rotation_deg']:.2g}°"
@@ -177,6 +196,12 @@ def _detail_html(c: "analysis.ComponentResult") -> str:
             + f"<br>파면 오차 {func['wfe_um']:.3g} μm (Maréchal 근사, S≥0.8=회절한계)"
             f"<br>광축 기울기 {func['axis_tilt_arcsec']:.3g}″ "
             f"(지향 예산 {func['budget_arcsec']:.3g}″의 {func['budget_ratio']:.3g}배)"
+        )
+    elif ftype == "screen":
+        lines.append(
+            "<br><b>[기능] 표시/터치</b> — 불능 면적 "
+            + _status_span(f"{func['dead_area_frac'] * 100:.1f}%", func["verdict"])
+            + "<br>임계 초과 셀 면적 비율 (커버글라스 균열/터치 손상 추정)"
         )
 
     settling = extras.get("settling") or {}
@@ -541,6 +566,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sim_gen = 0  # 시뮬 요청 세대 — mesh 교체 시 오래된 worker 결과 무시
 
         self._build_ui()
+        self._on_sim_mode_changed(0)  # 초기 모드(자유 낙하)에 맞춰 컨트롤 그룹 표시
         self.refresh_health()
         # 시작 시 기본 시나리오(허블 자산, 없으면 금속 판)를 띄워 BE 없이도
         # 인터랙션을 확인할 수 있게.
@@ -587,9 +613,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # (개발 체크아웃에서 자산 미생성/패키징 누락 시에도 앱은 동작해야 한다).
         self._scenario_kinds: list[str] = []
         items: list[str] = []
-        if os.path.isfile(_asset_path("assets", ASSET_MESH)):
-            self._scenario_kinds.append("hubble")
-            items.append("허블 우주망원경 (hubble)")
+        for kind, mesh, label in SCENARIO_ASSETS:
+            if os.path.isfile(_asset_path("assets", mesh)):
+                self._scenario_kinds.append(kind)
+                items.append(label)
         self._scenario_kinds += ["plate", "can"]
         items += ["금속 판 (plate)", "금속 캔 (can)"]
         self.scenario_combo = QtWidgets.QComboBox()
@@ -603,6 +630,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model_combo = QtWidgets.QComboBox()
         form.addWidget(self._labeled("Model", self.model_combo))
 
+        # Mode: 자유 낙하(기본) / 충격 — 아래 컨트롤 그룹을 전환한다.
+        self.sim_mode_combo = QtWidgets.QComboBox()
+        self.sim_mode_combo.addItems(["자유 낙하 (free fall)", "충격 (impact)"])
+        self.sim_mode_combo.currentIndexChanged.connect(self._on_sim_mode_changed)
+        form.addWidget(self._labeled("Mode", self.sim_mode_combo))
+
         # 메쉬 로드
         load_btn = QtWidgets.QPushButton("Load mesh…")
         load_btn.clicked.connect(self.on_load)
@@ -611,23 +644,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mesh_label.setWordWrap(True)
         form.addWidget(self.mesh_label)
 
-        # impact node
-        self.node_label = QtWidgets.QLabel("Impact node: — (click a node)")
-        form.addWidget(self.node_label)
+        # --- 자유 낙하 컨트롤 그룹 ---------------------------------------------
+        self.freefall_group = QtWidgets.QWidget()
+        ff = QtWidgets.QVBoxLayout(self.freefall_group)
+        ff.setContentsMargins(0, 0, 0, 0)
+        self.drop_height = self._spin(1.0, minimum=0.01)
+        self.drop_orient_combo = QtWidgets.QComboBox()  # _load_scenario가 채움
+        self.restitution = self._spin(0.30, minimum=0.0, maximum=0.95)
+        self.restitution.setSingleStep(0.05)
+        ff.addWidget(self._labeled("낙하 높이", self.drop_height))
+        ff.addWidget(self._labeled("낙하 자세", self.drop_orient_combo))
+        ff.addWidget(self._labeled("반발계수", self.restitution))
+        form.addWidget(self.freefall_group)
 
-        # force
+        # --- 충격 컨트롤 그룹 (노드 피킹 + force + radius) ----------------------
+        self.impact_group = QtWidgets.QWidget()
+        ig = QtWidgets.QVBoxLayout(self.impact_group)
+        ig.setContentsMargins(0, 0, 0, 0)
+        self.node_label = QtWidgets.QLabel("Impact node: — (click a node)")
+        ig.addWidget(self.node_label)
         self.fx = self._spin(0.0)
         self.fy = self._spin(0.0)
         self.fz = self._spin(-0.3)
-        form.addWidget(self._labeled("Force X", self.fx))
-        form.addWidget(self._labeled("Force Y", self.fy))
-        form.addWidget(self._labeled("Force Z", self.fz))
-
-        # radius / scale
+        ig.addWidget(self._labeled("Force X", self.fx))
+        ig.addWidget(self._labeled("Force Y", self.fy))
+        ig.addWidget(self._labeled("Force Z", self.fz))
         self.radius = self._spin(0.0, minimum=0.0)
         self.radius.setSpecialValueText("auto")  # 0 → 서버가 bbox 비례로 자동
+        ig.addWidget(self._labeled("Radius (0=auto)", self.radius))
+        form.addWidget(self.impact_group)
+
+        # scale은 두 모드 공용
         self.scale = self._spin(1.0, minimum=0.0)
-        form.addWidget(self._labeled("Radius (0=auto)", self.radius))
         form.addWidget(self._labeled("Scale", self.scale))
 
         # 액션 버튼
@@ -751,14 +799,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_analysis_panel(self, result: analysis.AnalysisResult):
         bg, fg = ANALYSIS_STATUS_STYLES.get(result.verdict, ANALYSIS_STATUS_STYLES["N/A"])
         mode_txt = "LIVE" if result.sim_mode == "live" else "DUMMY"
+        sim_txt = "낙하" if result.action.get("mode") == "free_fall" else "충격"
         extras = ""
         if result.single_frame:
             extras += " · 단일 프레임(속도 지표 없음)"
         if result.fallback_whole_mesh:
             extras += " · 부품 정의 없음(전체 메쉬)"
+        gm = result.global_motion or {}
+        posture = ""
+        if gm.get("available") and gm.get("rotation_deg", 0) > 1.0:
+            posture = f"\n낙하 후 자세 변화 {gm['rotation_deg']:.1f}° (변형과 별개)"
         self.analysis_summary.setText(
-            f"종합 판정: {result.verdict} — {result.scenario} · {mode_txt}{extras}\n"
-            f"최대 변위 {result.overall_max_disp:.4g} @ 노드 #{result.overall_max_node}"
+            f"종합 판정: {result.verdict} — {result.scenario} · {sim_txt} · {mode_txt}{extras}\n"
+            f"최대 변형 {result.overall_max_disp:.4g} @ 노드 #{result.overall_max_node}{posture}"
         )
         self.analysis_summary.setStyleSheet(
             f"background:{bg}; color:{fg}; padding:6px; border-radius:4px; font-weight:bold;"
@@ -1015,82 +1068,128 @@ class MainWindow(QtWidgets.QMainWindow):
         self.components_def = None  # 사용자 메쉬는 부품 정의 없음 → 전체 메쉬 분석
         self._reset_analysis_panel()
         self.node_label.setText("Impact node: — (click a node)")
+        self._configure_drop_controls(None)  # 사용자 메쉬는 자산 프리셋 없음
         self.mesh_label.setText(
             f"{os.path.basename(path)}  —  {len(self.vertices)} nodes, "
             f"{len(self.faces)} faces  [{self.file_format}]"
         )
         self._render_original(reset_camera=True)
-        self._enable_picking()
+        self._refresh_picking()
         self._reset_timeline()
-        self._log("mesh loaded — click a node to set impact point.")
+        self._log("mesh loaded — 모드에 맞춰 조건을 정하고 Simulate.")
 
     def _on_scenario_changed(self, index: int):
         if 0 <= index < len(self._scenario_kinds):
             self._load_scenario(self._scenario_kinds[index])
 
     def _load_scenario(self, kind: str):
-        """내장 시나리오 메쉬(허블 자산/금속 판/캔)를 로드. 기본 충격점을 미리 선택."""
+        """시나리오 메쉬(허블/스마트폰 자산 또는 금속 판/캔)를 로드."""
         self._stop_play()
         self._invalidate_sim()  # 진행 중 worker 결과 무효화 + Simulate 버튼 복구
         self.components_def = None
+
+        asset = next((a for a in SCENARIO_ASSETS if a[0] == kind), None)
+        if asset is not None:
+            self._load_asset_scenario(*asset)
+            return
+
         default_radius = 0.0  # 0 = auto (bbox 비례)
-        if kind == "hubble":
-            path = _asset_path("assets", ASSET_MESH)
-            try:
-                with open(path, "rb") as f:
-                    self.orig_bytes = f.read()
-                # 원본 파일 바이트를 그대로 BE에 보내므로(재파싱 동일) 인덱스 일치.
-                self.vertices, self.faces, self.file_format = load_mesh(path)
-            except Exception as e:
-                # 자산 손상/유실 — 판 시나리오로 강등 (앱은 계속 동작).
-                # 콤보 표시도 plate로 동기화해 UI 상태 어긋남을 막는다.
-                idx = self._scenario_kinds.index("plate")
-                self.scenario_combo.blockSignals(True)
-                self.scenario_combo.setCurrentIndex(idx)
-                self.scenario_combo.blockSignals(False)
-                self._load_scenario("plate")
-                self._log(f"허블 자산 로드 실패({e}) — 금속 판으로 대체")
-                return
-            self.components_def = analysis.load_components(
-                _asset_path("assets", ASSET_COMPONENTS)
-            )
-            center = 0
-            if self.components_def is not None:
-                # sidecar 값 타입 오류도 '자산 손상 시 강등' 계약대로 기본값 처리.
-                try:
-                    center = int(self.components_def.get("default_impact_node") or 0)
-                    default_radius = float(self.components_def.get("default_radius") or 0.0)
-                except (TypeError, ValueError):
-                    center, default_radius = 0, 0.0
-            center = min(max(0, center), len(self.vertices) - 1)
-            label = "허블 우주망원경 (NASA)"
-        elif kind == "can":
+        if kind == "can":
             self.vertices, self.faces = make_can_mesh()
             center = (CAN_NH // 2) * CAN_NTHETA  # 중간 높이, θ=0
             label = f"금속 캔 (cylinder {CAN_NTHETA}×{CAN_NH})"
-            self.file_format = "vtk"
-            self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
         else:  # plate
             self.vertices, self.faces = make_plate_mesh()
             center = (PLATE_N // 2) * PLATE_N + (PLATE_N // 2)
             label = f"금속 판 ({PLATE_N}×{PLATE_N} grid)"
-            self.file_format = "vtk"
-            self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
-        self.frames = None
-        # 시나리오별 권장 충격 반경 (자산 JSON bake 값) — 0이면 auto.
+        self.file_format = "vtk"
+        self.orig_bytes = dump_mesh(self.vertices, self.faces, self.file_format)
         self.radius.setValue(default_radius)
-        self._reset_analysis_panel()
+        self._configure_drop_controls(None)  # 내장 메쉬는 자산 프리셋 없음
+        self._finish_scenario_load(center, label)
 
+    def _load_asset_scenario(self, kind: str, mesh_file: str, combo_label: str):
+        """자산 메쉬(원본 바이트 그대로 BE 전송 → 인덱스 일치) + components.json 로드.
+
+        파일 손상/유실 시 금속 판으로 강등하고 콤보도 동기화한다."""
+        path = _asset_path("assets", mesh_file)
+        try:
+            with open(path, "rb") as f:
+                self.orig_bytes = f.read()
+            self.vertices, self.faces, self.file_format = load_mesh(path)
+        except Exception as e:
+            fallback = "plate"
+            self.scenario_combo.blockSignals(True)
+            self.scenario_combo.setCurrentIndex(self._scenario_kinds.index(fallback))
+            self.scenario_combo.blockSignals(False)
+            self._load_scenario(fallback)
+            self._log(f"{combo_label} 자산 로드 실패({e}) — 금속 판으로 대체")
+            return
+
+        self.components_def = analysis.load_components(
+            _asset_path("assets", os.path.splitext(mesh_file)[0] + ".components.json")
+        )
+        center, default_radius = 0, 0.0
+        if self.components_def is not None:
+            try:  # sidecar 값 타입 오류도 기본값으로 강등
+                center = int(self.components_def.get("default_impact_node") or 0)
+                default_radius = float(self.components_def.get("default_radius") or 0.0)
+            except (TypeError, ValueError):
+                center, default_radius = 0, 0.0
+        center = min(max(0, center), len(self.vertices) - 1)
+        self.radius.setValue(default_radius)
+        self._configure_drop_controls(self.components_def)
+        self._finish_scenario_load(center, combo_label.split(" (")[0])
+
+    def _configure_drop_controls(self, components_def: dict | None):
+        """낙하 자세 콤보(공통 프리셋 + 자산 프리셋)와 기본 낙하 높이를 세팅.
+
+        메쉬 스케일이 자산마다 달라(정규화 여부) 높이는 자산 JSON 우선, 없으면
+        bbox 대각선의 0.5배를 기본으로 한다."""
+        self.drop_orient_combo.clear()
+        presets = list(DROP_ORIENTATION_PRESETS)
+        default_name = None
+        default_height = None
+        if isinstance(components_def, dict):
+            for item in components_def.get("drop_orientations") or []:
+                euler = item.get("euler_deg")
+                if not (isinstance(euler, (list, tuple)) and len(euler) == 3):
+                    continue
+                try:  # 원소 타입 오류도 '자산 손상 시 강등' 계약대로 건너뛴다
+                    vals = tuple(float(v) for v in euler)
+                except (TypeError, ValueError):
+                    continue
+                presets.append((str(item.get("name", "자산 자세")), vals))
+            default_name = components_def.get("default_drop_orientation")
+            try:
+                default_height = float(components_def.get("default_drop_height"))
+            except (TypeError, ValueError):
+                default_height = None
+        for name, euler in presets:
+            self.drop_orient_combo.addItem(name, userData=euler)
+        if default_name:
+            idx = self.drop_orient_combo.findText(default_name)
+            if idx >= 0:
+                self.drop_orient_combo.setCurrentIndex(idx)
+        if default_height is None:
+            diag = float(np.linalg.norm(self.vertices.max(0) - self.vertices.min(0))) or 1.0
+            default_height = round(0.5 * diag, 2)
+        self.drop_height.setValue(default_height)
+
+    def _finish_scenario_load(self, center: int, label: str):
+        """시나리오 로드 공통 마무리 — 렌더/피킹/충격점/타임라인."""
+        self.frames = None
+        self._reset_analysis_panel()
         self.mesh_label.setText(
             f"{label} — {len(self.vertices)} nodes, {len(self.faces)} faces"
         )
         self._render_original(reset_camera=True)
-        self._enable_picking()
-        self.impact_node = center
-        self.node_label.setText(f"Impact node: {center} (기본값)")
-        self._highlight_node(center)
+        self.impact_node = min(max(0, center), len(self.vertices) - 1)
+        self._refresh_picking()  # 충격 모드에서만 픽 활성 + 하이라이트
+        self.node_label.setText(f"Impact node: {self.impact_node} (기본값)")
         self._reset_timeline()
-        self._log(f"{label} 로드됨 — 노드를 클릭해 충격점을 바꾸고 Simulate.")
+        verb = "충격점을 바꾸고" if self._current_mode() == "impact" else "낙하 조건을 정하고"
+        self._log(f"{label} 로드됨 — {verb} Simulate.")
 
     def _render_original(self, reset_camera: bool = False):
         """원본 메쉬만 렌더 (애니메이션/pick highlight/분석 마커 제거)."""
@@ -1106,8 +1205,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if reset_camera:
             self.plotter.reset_camera()
 
+    def _current_mode(self) -> str:
+        """'impact' | 'free_fall' — Mode 콤보 현재값."""
+        return "impact" if self.sim_mode_combo.currentIndex() == 1 else "free_fall"
+
     def _disable_picking(self):
-        # 결과 재생 중에는 클릭이 카메라 조작 전용 — 픽 마커가 찍히지 않게 한다.
+        # 결과 재생 중·낙하 모드에서는 클릭이 카메라 조작 전용 — 픽 마커를 안 찍는다.
         try:
             self.plotter.disable_picking()
         except Exception:
@@ -1122,6 +1225,27 @@ class MainWindow(QtWidgets.QMainWindow):
             callback=self._on_pick, show_message=False, left_clicking=True,
             use_picker=True,
         )
+
+    def _refresh_picking(self):
+        """충격 모드 + 원본 표시(frames 없음)일 때만 픽 활성화 + 충격점 하이라이트.
+
+        낙하 모드는 충격점 개념이 없어 픽을 끈다. 결과 재생 중에도 끈다."""
+        if self._current_mode() == "impact" and self.frames is None and self.vertices is not None:
+            self._enable_picking()
+            if self.impact_node is not None:
+                self._highlight_node(self.impact_node)
+        else:
+            self._disable_picking()
+            # 낙하 모드/결과 재생 중엔 충격점 마커가 무의미 — 남아 있으면 제거.
+            if self._pick_actor is not None:
+                self.plotter.remove_actor(self._pick_actor)
+                self._pick_actor = None
+
+    def _on_sim_mode_changed(self, _index: int):
+        impact = self._current_mode() == "impact"
+        self.impact_group.setVisible(impact)
+        self.freefall_group.setVisible(not impact)
+        self._refresh_picking()
 
     def _on_pick(self, point, *args):
         if self.vertices is None or point is None:
@@ -1159,42 +1283,69 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.vertices is None or self.orig_bytes is None:
             QtWidgets.QMessageBox.information(self, "No mesh", "Load a mesh first.")
             return
-        if self.impact_node is None:
-            QtWidgets.QMessageBox.information(self, "No node", "Click a node to set the impact point.")
-            return
 
-        action = {
-            "impact_node": self.impact_node,
-            "force": [self.fx.value(), self.fy.value(), self.fz.value()],
-            "scale": self.scale.value(),
-        }
-        if self.radius.value() > 0:
-            action["radius"] = self.radius.value()
+        mode = self._current_mode()
+        if mode == "free_fall":
+            action = {
+                "mode": "free_fall",
+                "drop_height": self.drop_height.value(),
+                "restitution": self.restitution.value(),
+                "scale": self.scale.value(),
+                "frames": 90,  # 명시 전송 — BE MAX_SIM_POINTS 힌트가 정확해진다
+                "orientation": list(self.drop_orient_combo.currentData() or (0.0, 0.0, 0.0)),
+            }
+            model_wanted = "free_fall"
+        else:  # impact
+            if self.impact_node is None:
+                QtWidgets.QMessageBox.information(self, "No node", "충격점을 클릭해 고르세요.")
+                return
+            action = {
+                "mode": "impact",
+                "impact_node": self.impact_node,
+                "force": [self.fx.value(), self.fy.value(), self.fz.value()],
+                "scale": self.scale.value(),
+            }
+            if self.radius.value() > 0:
+                action["radius"] = self.radius.value()
+            # 충격 모드는 model 콤보 선택을 쓰되, free_fall이면 metal_dent로 대체.
+            model_wanted = self.model_combo.currentText() or None
+            if model_wanted == "free_fall":
+                model_wanted = "metal_dent"
         self._last_action = action  # 분석 요약(action 표시)용
 
         self._stop_play()
-        # BE ready면 /simulate, 아니면 로컬 metal_dent. 연결 상태는 startup/Refresh 기준 —
-        # GUI 스레드에서 동기 health GET을 돌리지 않아 미연결 시에도 멈추지 않는다.
-        if self._be_ready:
-            model = self.model_combo.currentText() or None
+        # BE ready + 요청 모델이 BE에 있으면 /simulate, 아니면 로컬 미러.
+        be_has_model = model_wanted is None or self._model_available(model_wanted)
+        if self._be_ready and be_has_model:
             self.simulate_btn.setEnabled(False)
-            self._log("simulating (BE /simulate)…")
+            self._log(f"simulating (BE /simulate, {model_wanted or 'default'})…")
             self._sim_gen += 1
             gen = self._sim_gen
             self.worker = SimulateWorker(
-                self.client, self.orig_bytes, self.file_format, action, model
+                self.client, self.orig_bytes, self.file_format, action, model_wanted
             )
             self.worker.finished_ok.connect(lambda p, g=gen: self._on_frames_ready(g, p))
             self.worker.failed.connect(lambda m, g=gen: self._on_sim_failed(g, m))
             self.worker.start()
         else:
+            if self._be_ready and not be_has_model:
+                self._log(f"BE에 {model_wanted} 모델 없음 — 로컬 미러로 대체")
             try:
-                frames = metal_dent_simulate(self.vertices, self.faces, action)
+                frames = self._local_simulate(mode, action)
             except Exception as e:
                 self._log(f"failed: {e}")
                 QtWidgets.QMessageBox.critical(self, "Simulate failed", str(e))
                 return
             self._setup_animation(self.faces, frames, dummy=True)
+
+    def _model_available(self, model_id: str) -> bool:
+        return self.model_combo.findText(model_id) >= 0
+
+    def _local_simulate(self, mode: str, action: dict) -> np.ndarray:
+        """오프라인 폴백 — 모드별 로컬 미러 (BE 모델과 동일 수식)."""
+        if mode == "free_fall":
+            return free_fall_sim.free_fall_trajectory(self.vertices, action)
+        return metal_dent_simulate(self.vertices, self.faces, action)
 
     def _on_frames_ready(self, gen, payload):
         self.simulate_btn.setEnabled(True)
@@ -1212,7 +1363,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _setup_animation(self, faces, frames, dummy: bool):
         """(T,N,3) 프레임을 변위 히트맵 메쉬로 렌더하고 재생을 시작한다."""
-        frames = np.asarray(frames)
+        frames = np.asarray(frames, dtype=np.float64)
         self.frames = frames
         self.faces = np.asarray(faces)
         # 변위 기준점: T==1이면 frames[0]이 이미 변형 상태 → 원본 대비
@@ -1222,12 +1373,25 @@ class MainWindow(QtWidgets.QMainWindow):
             rest = np.asarray(self.vertices, dtype=np.float64)
         else:
             rest = frames[0]
-        self.disp = np.linalg.norm(frames - rest[None], axis=2)  # (T,N)
-        self.vmax = float(self.disp.max()) or 1.0
+        # 자유 낙하는 전역 강체(낙하/바운스)를 제거한 변형장으로 색칠한다 — 물체는
+        # 눈에 보이게 낙하하되(렌더는 원시 frames) 색은 dent만 나타낸다. 충격 모드는
+        # 물체가 고정돼 있어 원시 변위를 그대로 쓴다(국소 대변형 보존).
+        free_fall = self._last_action.get("mode") == "free_fall"
+        rigid_removed = None
+        if free_fall:
+            rigid_removed = analysis.remove_global_rigid(frames, rest)
+            self.disp = np.linalg.norm(rigid_removed[0] - rest[None], axis=2)
+        else:
+            self.disp = np.linalg.norm(frames - rest[None], axis=2)  # (T,N)
+        self.vmax = float(self.disp.max())
+        if self.vmax < 1e-9:  # 순수 강체 낙하 등 — fp 노이즈를 증폭하지 않는다
+            self.vmax = 1.0
 
         self.plotter.clear()
         self._pick_actor = None
         self._clear_overlays(already_cleared=True)  # clear()가 이미 액터를 지움
+        if free_fall:
+            self._add_floor_plane(frames)
         self.anim_poly = to_polydata(frames[0], self.faces)
         self.anim_poly["displacement"] = self.disp[0]
         self.plotter.add_mesh(
@@ -1249,20 +1413,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.anim_idx = 0
         self._render_frame(0)
 
-        tag = " (로컬 metal_dent)" if dummy else ""
-        self._log(f"simulate 완료{tag} — {T} frames, max|disp|={self.vmax:.4f}")
+        if dummy:
+            tag = " (로컬 free_fall)" if free_fall else " (로컬 metal_dent)"
+        else:
+            tag = ""
+        self._log(f"simulate 완료{tag} — {T} frames, max|변형|={self.vmax:.4f}")
 
         # 부품별 충격 분석 — LIVE/DUMMY 동일 경로(frames는 이미 FE 메모리에 있다).
-        # 동기 계산이지만 (T,N) 벡터 연산 몇 번이라 로컬 metal_dent 시뮬(이미 GUI
-        # 스레드에서 돈다)보다 저렴 — 워커 불필요.
+        # 낙하 모드는 히트맵과 같은 강체 제거 결과를 공유해 이중 Kabsch를 피한다.
         self.analysis = analysis.compute_analysis(
             frames, self.vertices, self.faces, self._last_action,
             self.components_def, "dummy" if dummy else "live",
+            remove_rigid=free_fall, rigid_removed=rigid_removed,
         )
         self._update_analysis_panel(self.analysis)
         self._show_analysis_overlays(self.analysis)
         if T > 1:
             self._start_play()
+
+    def _add_floor_plane(self, frames: np.ndarray):
+        """낙하 시나리오의 바닥 평면(반투명) — 접촉 지점을 직관적으로 보이게."""
+        z_floor = float(frames[:, :, 2].min())
+        lo, hi = self.vertices.min(0), self.vertices.max(0)
+        span = float(np.linalg.norm(hi[:2] - lo[:2])) or 1.0
+        cx, cy = float((lo[0] + hi[0]) / 2), float((lo[1] + hi[1]) / 2)
+        plane = pv.Plane(center=(cx, cy, z_floor), direction=(0, 0, 1),
+                         i_size=1.6 * span, j_size=1.6 * span)
+        actor = self.plotter.add_mesh(
+            plane, color="#bdbdbd", opacity=0.35, name="floor",
+            pickable=False, reset_camera=False,
+        )
+        self._overlay_actors.append(actor)
 
     def _render_frame(self, i: int):
         if self.frames is None or self.anim_poly is None:
@@ -1336,9 +1517,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._invalidate_sim()  # 진행 중 worker 결과 무효화 + Simulate 버튼 복구
         self.frames = None
         self._render_original(reset_camera=False)
-        if self.impact_node is not None:
-            self._highlight_node(self.impact_node)
-        self._enable_picking()
+        self._refresh_picking()  # 충격 모드에서만 픽 재활성 + 하이라이트
         self._reset_timeline()
         self._log("reset to original.")
 

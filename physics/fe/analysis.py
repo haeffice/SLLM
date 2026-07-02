@@ -52,19 +52,61 @@ _SETTLE_BAND = 0.02
 
 # ---- 강체 분해 / 기하 헬퍼 ---------------------------------------------------
 
-def _kabsch(rest: np.ndarray, deformed: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """최적 강체 회전 적합 (Kabsch). (M,3) 쌍 → (R (3,3), 잔차 (M,)).
+def _kabsch_rot(x0: np.ndarray, x1: np.ndarray) -> np.ndarray:
+    """중심화된 (M,3) 쌍의 최적 강체 회전 (Kabsch). x1 ≈ x0 @ R.T.
 
-    H = X0ᵀX1 (중심화), SVD H=UΣVᵀ, R = V·diag(1,1,det(VUᵀ))·Uᵀ.
-    잔차 = 강체 운동(회전+병진)을 제거하고 남는 순수 변형 크기.
+    H = X0ᵀX1, SVD H=UΣVᵀ, R = V·diag(1,1,det(VUᵀ))·Uᵀ (반사 보정).
     """
-    c0, c1 = rest.mean(0), deformed.mean(0)
-    x0, x1 = rest - c0, deformed - c1
     u, _, vt = np.linalg.svd(x0.T @ x1)
     d = np.sign(np.linalg.det(vt.T @ u.T)) or 1.0
-    rot = vt.T @ np.diag([1.0, 1.0, d]) @ u.T
+    return vt.T @ np.diag([1.0, 1.0, d]) @ u.T
+
+
+def _kabsch(rest: np.ndarray, deformed: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """최적 강체 회전 적합. (M,3) 쌍 → (R (3,3), 잔차 (M,)).
+
+    잔차 = 강체 운동(회전+병진)을 제거하고 남는 순수 변형 크기.
+    """
+    x0, x1 = rest - rest.mean(0), deformed - deformed.mean(0)
+    rot = _kabsch_rot(x0, x1)
     residuals = np.linalg.norm(x1 - x0 @ rot.T, axis=1)
     return rot, residuals
+
+
+def remove_global_rigid(frames: np.ndarray, rest: np.ndarray) -> tuple[np.ndarray, dict]:
+    """프레임별 전역 최적 강체(회전+병진)를 제거해 rest 좌표계로 정렬한 프레임.
+
+    자유 낙하처럼 전역 강체 운동(낙하·바운스·회전)이 지배하는 궤적에서, 변위/속도
+    지표가 이동이 아니라 "변형"만 재도록 한다. aligned[t] = (frames[t]−c_t)@R_t + c0
+    (R_t는 rest→frames[t] 회전; 역사상은 @R_t). 순수 강체 궤적이면 aligned[t] ≡ rest.
+
+    Returns:
+        (aligned (T,N,3), global_motion) — global_motion은 마지막 프레임의 전역
+        회전각(도)·병진 크기 {"available", "rotation_deg", "translation"}.
+        T==1 또는 N<3이면 정렬 없이 원본과 {"available": False}를 돌려준다.
+    """
+    frames = np.asarray(frames, dtype=np.float64)
+    rest = np.asarray(rest, dtype=np.float64)
+    T, N = frames.shape[0], frames.shape[1]
+    if T <= 1 or N < 3:
+        return frames, {"available": False}
+
+    c0 = rest.mean(0)
+    x0 = rest - c0
+    aligned = np.empty_like(frames)
+    rot_last = np.eye(3)
+    for t in range(T):
+        c_t = frames[t].mean(0)
+        rot = _kabsch_rot(x0, frames[t] - c_t)
+        aligned[t] = (frames[t] - c_t) @ rot + c0
+        if t == T - 1:
+            rot_last = rot
+    translation = float(np.linalg.norm(frames[-1].mean(0) - c0))
+    return aligned, {
+        "available": True,
+        "rotation_deg": _rotation_angle_deg(rot_last),
+        "translation": translation,
+    }
 
 
 def _rotation_angle_deg(rot: np.ndarray) -> float:
@@ -128,20 +170,21 @@ def _functional_metrics(functional: dict, idx, rest, settled, rot, residuals,
     elif ftype == "solar_panel":
         tilt = _axis_tilt_deg(axes[:, 2], rot)  # 패널 법선 기울기
         cos_factor = float(np.cos(np.radians(tilt)))
-        frac_dead = 0.0
-        if faces_in is not None:
-            v0, v1, v2 = rest[faces_in[:, 0]], rest[faces_in[:, 1]], rest[faces_in[:, 2]]
-            areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
-            dead = np.any(peak_disp[faces_in] >= threshold, axis=1)
-            total_area = float(areas.sum())
-            if total_area > 0:
-                frac_dead = float(areas[dead].sum() / total_area)
+        frac_dead = _dead_area_frac(rest, faces_in, peak_disp, threshold)
         p0 = float(functional.get("p0_w", 5000.0))
         power_frac = max(0.0, cos_factor * (1.0 - frac_dead))
         out.update({
             "tilt_deg": tilt, "cos_factor": cos_factor, "dead_area_frac": frac_dead,
             "power_frac": power_frac, "power_lost_w": p0 * (1.0 - power_frac), "p0_w": p0,
             "verdict": "OK" if power_frac > 0.9 else "WARN" if power_frac >= 0.6 else "FAIL",
+        })
+
+    elif ftype == "screen":
+        # 표시/터치 불능 면적 = 임계 초과 정점을 포함한 셀 면적 비율.
+        frac = _dead_area_frac(rest, faces_in, peak_disp, threshold)
+        out.update({
+            "dead_area_frac": frac,
+            "verdict": "OK" if frac < 0.05 else "WARN" if frac < 0.20 else "FAIL",
         })
 
     elif ftype == "optical_tube":
@@ -171,6 +214,20 @@ def _functional_metrics(functional: dict, idx, rest, settled, rot, residuals,
     return out
 
 
+def _dead_area_frac(rest: np.ndarray, faces_in: np.ndarray | None,
+                    peak_disp: np.ndarray, threshold: float) -> float:
+    """임계 초과 정점을 포함한 face의 면적 비율 (solar_panel/screen 공용)."""
+    if faces_in is None:
+        return 0.0
+    v0, v1, v2 = rest[faces_in[:, 0]], rest[faces_in[:, 1]], rest[faces_in[:, 2]]
+    areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+    total_area = float(areas.sum())
+    if total_area <= 0:
+        return 0.0
+    dead = np.any(peak_disp[faces_in] >= threshold, axis=1)
+    return float(areas[dead].sum() / total_area)
+
+
 def _settling_metrics(comp_frames: np.ndarray) -> dict:
     """부품 진동 정착 지표 — 시간축은 정규화 구간(0..1) 기준으로 정직하게 표기.
 
@@ -183,7 +240,7 @@ def _settling_metrics(comp_frames: np.ndarray) -> dict:
     settled = comp_frames[-1]
     s = np.linalg.norm(comp_frames - settled[None], axis=2).mean(axis=1)  # (T,)
     peak = float(s.max())
-    if peak <= 0:
+    if peak <= 1e-9:  # 순수 강체 궤적의 정렬 잔여 노이즈로 통계를 만들지 않는다
         return {"available": False}
 
     above = np.nonzero(s > _SETTLE_BAND * peak)[0]
@@ -391,6 +448,8 @@ class AnalysisResult:
     overall_max_node: int = 0
     verdict: str = "OK"
     components: list[ComponentResult] = field(default_factory=list)
+    # 전역 강체 운동(낙하 후 자세 변화 등) — 변형 지표와 분리해 별도 보고.
+    global_motion: dict = field(default_factory=dict)
 
     def to_summary_json(self) -> dict:
         """per-node 배열을 뺀 압축 요약 — /chat payload 및 chat_fallback 입력."""
@@ -407,6 +466,7 @@ class AnalysisResult:
                 "node": self.overall_max_node,
                 "verdict": self.verdict,
             },
+            "global_motion": _round_tree(self.global_motion),
             "components": [
                 {
                     "id": c.component_id,
@@ -460,12 +520,21 @@ def compute_analysis(
     action: dict,
     components_def: dict | None,
     sim_mode: str,
+    remove_rigid: bool = False,
+    rigid_removed: tuple[np.ndarray, dict] | None = None,
 ) -> AnalysisResult:
     """(T,N,3) 프레임 → 부품별 충격 분석. GUI 스레드에서 돌 만큼 가볍다
-    (벡터 연산 + 부품당 SVD 1회 — 로컬 metal_dent 시뮬 자체보다 저렴).
+    (벡터 연산 + 프레임/부품당 소형 SVD — 로컬 시뮬 자체보다 저렴).
 
-    faces는 변형률(edge 신장률)·태양전지 손상 면적 계산에 쓰인다 — None이면
-    해당 지표만 생략(available=False)."""
+    remove_rigid=True(자유 낙하)이면 모든 변위/속도/정착 지표를 **전역 강체 제거
+    후의 변형장** 기준으로 잰다 (remove_global_rigid) — 낙하·바운스 이동이 변위로
+    새지 않게. 충격 모드(remove_rigid=False, 기본)는 물체가 고정돼 있으므로 원시
+    프레임을 그대로 쓴다 — 국소 대변형이 강체로 흡수되는 것을 막는다. 낙하 모드는
+    호출자가 계산한 (aligned, global_motion)을 rigid_removed로 넘겨 재계산을 아낀다
+    (app.py 히트맵과 공유).
+
+    faces는 변형률(edge 신장률)·손상 면적 계산에 쓰인다 — None이면 해당
+    지표만 생략(available=False)."""
     frames = np.asarray(frames, dtype=np.float64)
     vertices = np.asarray(vertices, dtype=np.float64)
     T, N = frames.shape[0], frames.shape[1]
@@ -474,11 +543,19 @@ def compute_analysis(
     # 변위 기준점: 단일 프레임 결과는 frames[0]이 이미 변형 상태 → 원본 대비.
     rest = vertices if (single_frame and vertices.shape == frames.shape[1:]) else frames[0]
 
-    peak_disp = np.linalg.norm(frames - rest[None], axis=2).max(axis=0)  # (N,)
+    if not remove_rigid:
+        frames_a, global_motion = frames, {"available": False}
+    elif rigid_removed is not None and rigid_removed[0].shape == frames.shape:
+        frames_a, global_motion = np.asarray(rigid_removed[0], dtype=np.float64), rigid_removed[1]
+    else:
+        frames_a, global_motion = remove_global_rigid(frames, rest)
+
+    peak_disp = np.linalg.norm(frames_a - rest[None], axis=2).max(axis=0)  # (N,)
     if single_frame:
         peak_vel = np.zeros(N, dtype=np.float64)
     else:
-        peak_vel = np.linalg.norm(np.diff(frames, axis=0), axis=2).max(axis=0)  # (N,)
+        # 변형 속도 프록시 — 낙하/바운스 강체 속도가 아니라 변형장의 변화율.
+        peak_vel = np.linalg.norm(np.diff(frames_a, axis=0), axis=2).max(axis=0)  # (N,)
 
     max_disp = float(peak_disp.max()) or 1.0
     max_vel = float(peak_vel.max()) or 1.0
@@ -504,7 +581,7 @@ def compute_analysis(
             np.arange(N, dtype=np.int64),
         )]
 
-    settled = frames[-1]
+    settled = frames_a[-1]  # 정렬된 정착 상태 — 부품 Kabsch가 국소 변형만 재도록
     try:
         scale_m = float((components_def or {}).get("real_scale_m_per_unit") or 1.0)
     except (TypeError, ValueError):
@@ -529,7 +606,7 @@ def compute_analysis(
             ratio = c_disp / threshold
             over = idx[peak_disp[idx] >= threshold]
             extras = _compute_extras(
-                comp, idx, rest, settled, frames, faces, peak_disp,
+                comp, idx, rest, settled, frames_a, faces, peak_disp,
                 threshold, scale_m, single_frame,
             )
         components.append(ComponentResult(
@@ -569,4 +646,5 @@ def compute_analysis(
         overall_max_node=int(np.argmax(peak_disp)),
         verdict=verdict,
         components=components,
+        global_motion=global_motion,
     )

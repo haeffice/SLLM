@@ -34,18 +34,20 @@ from typing import Type
 
 from models.base import BaseMeshPredictor
 from models.dummy import DummyLinearDeformer
+from models.free_fall import FreeFallSimulator
 from models.metal_dent import MetalDentSimulator
 
 log = logging.getLogger("be.config")
 
 
 REGISTRY: dict[str, Type[BaseMeshPredictor]] = {
-    MetalDentSimulator.model_id: MetalDentSimulator,  # 데모: 시간-시퀀스 dent
+    FreeFallSimulator.model_id: FreeFallSimulator,  # 데모 기본: 자유 낙하(다중 접촉)
+    MetalDentSimulator.model_id: MetalDentSimulator,  # 충격 모드: 시간-시퀀스 dent
     DummyLinearDeformer.model_id: DummyLinearDeformer,  # 단일 프레임(비교용)
 }
 
-# 데모 기본값 — metal_dent(시퀀스)를 우선 로드/기본 모델로.
-_DEFAULT_ENABLED = "metal_dent,dummy"
+# 데모 기본값 — free_fall(자유 낙하)을 우선 로드/기본 모델로.
+_DEFAULT_ENABLED = "free_fall,metal_dent,dummy"
 
 
 def enabled_model_ids() -> list[str]:
