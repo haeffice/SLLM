@@ -759,29 +759,57 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis_detail.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.analysis_detail.setStyleSheet("QTextBrowser{border:1px solid #ddd; color:#333;}")
         alay.addWidget(self.analysis_detail, stretch=1)
+        # ChatGPT/Gemini식 프롬프트 입력 — 분석 탭 하단(메인 진입점). 전송 시 챗 탭 전환.
+        alay.addWidget(self._make_chat_input(
+            "분석 결과에 대해 무엇이든 물어보세요…"))
         self.left_tabs.addTab(analysis_tab, "분석")
 
-        # 탭 1: 챗 — 대화 뷰 (질문 전송 시 이 탭으로 자동 전환)
+        # 탭 1: 챗 — 대화 뷰 + 자체 입력(후속 질문으로 멀티턴 이어가기)
         chat_tab = QtWidgets.QWidget()
         clay = QtWidgets.QVBoxLayout(chat_tab)
         self.chat_view = QtWidgets.QTextBrowser()
         self.chat_view.setOpenExternalLinks(False)
-        clay.addWidget(self.chat_view)
+        clay.addWidget(self.chat_view, stretch=1)
+        clay.addWidget(self._make_chat_input("메시지 입력…"))
         self.left_tabs.addTab(chat_tab, "챗")
-
-        # 하단 입력줄 — 탭 밖이라 어느 탭에서든 보인다
-        row = QtWidgets.QHBoxLayout()
-        self.chat_input = QtWidgets.QLineEdit()
-        self.chat_input.setPlaceholderText("분석 결과에 대해 질문…")
-        self.chat_input.returnPressed.connect(self.on_chat_send)
-        row.addWidget(self.chat_input, stretch=1)
-        self.chat_send_btn = QtWidgets.QPushButton("전송")
-        self.chat_send_btn.clicked.connect(self.on_chat_send)
-        row.addWidget(self.chat_send_btn)
-        lay.addLayout(row)
 
         self._reset_analysis_panel()
         return panel
+
+    # 두 탭 공용 입력 위젯을 각각 관리 — 어느 쪽에서 보내든 같은 흐름을 탄다.
+    def _make_chat_input(self, placeholder: str) -> QtWidgets.QWidget:
+        """ChatGPT식 프롬프트 입력 한 벌(둥근 입력창 + 전송 버튼)을 만들어 반환.
+
+        여러 탭에 각각 배치하므로 위젯 참조를 리스트에 모아 활성/비활성·클리어를
+        일괄 처리한다."""
+        if not hasattr(self, "chat_inputs"):
+            self.chat_inputs: list[QtWidgets.QLineEdit] = []
+            self.chat_send_btns: list[QtWidgets.QPushButton] = []
+        box = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(box)
+        row.setContentsMargins(0, 6, 0, 0)
+        row.setSpacing(6)
+        line = QtWidgets.QLineEdit()
+        line.setPlaceholderText(placeholder)
+        line.setMinimumHeight(38)
+        line.setStyleSheet(
+            "QLineEdit{border:1px solid #cfcfcf; border-radius:19px; padding:0 14px;"
+            " background:#fafafa;} QLineEdit:focus{border:1px solid #2e7d32;}"
+        )
+        line.returnPressed.connect(lambda w=line: self.on_chat_send(w))
+        btn = QtWidgets.QPushButton("전송")
+        btn.setMinimumHeight(38)
+        btn.setStyleSheet(
+            "QPushButton{border:none; border-radius:19px; padding:0 16px;"
+            " background:#2e7d32; color:white; font-weight:bold;}"
+            " QPushButton:disabled{background:#bdbdbd;}"
+        )
+        btn.clicked.connect(lambda _=False, w=line: self.on_chat_send(w))
+        row.addWidget(line, stretch=1)
+        row.addWidget(btn)
+        self.chat_inputs.append(line)
+        self.chat_send_btns.append(btn)
+        return box
 
     # ---- 분석 패널/오버레이 --------------------------------------------------
     def _reset_analysis_panel(self):
@@ -908,14 +936,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._overlay_actors = []
 
     # ---- 챗 ------------------------------------------------------------------
-    def on_chat_send(self):
-        question = self.chat_input.text().strip()
+    def on_chat_send(self, source: QtWidgets.QLineEdit | None = None):
+        # 분석/챗 두 탭의 입력 중 트리거한 쪽(또는 내용 있는 첫 입력)의 텍스트.
+        line = source if source is not None else next(
+            (w for w in self.chat_inputs if w.text().strip()), None
+        )
+        question = line.text().strip() if line is not None else ""
         if not question:
             return
         if self.chat_worker is not None and self.chat_worker.isRunning():
             return  # 입력 비활성화로 도달하지 않지만 방어
-        self.chat_input.clear()
-        self.left_tabs.setCurrentIndex(1)  # 챗 탭으로 전환
+        for w in self.chat_inputs:
+            w.clear()
+        self.left_tabs.setCurrentIndex(1)  # 챗 탭으로 전환 (대화가 이어지는 곳)
         self._append_chat("user", question)
 
         summary = self.analysis.to_summary_json() if self.analysis is not None else {}
@@ -959,9 +992,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._push_chat_history(question, answer)
 
     def _set_chat_enabled(self, enabled: bool):
-        self.chat_input.setEnabled(enabled)
-        self.chat_send_btn.setEnabled(enabled)
-        self.chat_send_btn.setText("전송" if enabled else "…")
+        for w in self.chat_inputs:
+            w.setEnabled(enabled)
+        for b in self.chat_send_btns:
+            b.setEnabled(enabled)
+            b.setText("전송" if enabled else "…")
 
     def _append_chat(self, role: str, text: str, tag: str | None = None):
         body = html.escape(text).replace("\n", "<br>")
