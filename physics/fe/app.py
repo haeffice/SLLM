@@ -96,6 +96,120 @@ ASSET_COMPONENTS = "hubble.components.json"
 # 크래시하므로 프로세스 종료까지 참조를 유지한다 (closeEvent._drain_worker).
 _ORPHAN_WORKERS: list = []
 
+# 기능 영향 분석의 허블 실화 앵커 (상세 패널 하단 표시).
+FUNCTIONAL_ANCHORS = {
+    "solar_panel": "실제 허블도 태양전지판 열 플러터 지터로 SM1(1993)에서 어레이를 교체했다.",
+    "antenna": "허블 HGA는 빔폭 ~4°의 S-band 접시로 TDRS에 1 Mbps 과학 데이터를 보낸다.",
+    "optical_tube": "허블 주경은 2.2 μm 연마 오차만으로 임무가 마비됐던 광학계다.",
+}
+
+# 변형률 판정 → 분석 상태 색 매핑.
+_STRAIN_STATUS = {"소성 변형": "FAIL", "항복 근접": "WARN", "탄성": "OK"}
+
+
+def _functional_brief(c: "analysis.ComponentResult") -> str:
+    """분석 표 '기능 영향' 열 — 부품 functional type별 대표 지표 한 줄."""
+    extras = c.extras or {}
+    func = extras.get("functional") or {}
+    ftype = func.get("type")
+    if ftype == "antenna":
+        return f"-{func.get('loss_total_db', 0):.3g} dB"
+    if ftype == "solar_panel":
+        return f"전력 {func.get('power_frac', 1.0) * 100:.0f}%"
+    if ftype == "optical_tube":
+        s = func.get("strehl", 1.0)
+        return f"S={s:.2g}" if s >= 0.001 else "S<0.001"
+    rigid = extras.get("rigid")
+    if rigid and rigid.get("rotation_deg", 0) > 0.01:
+        return f"회전 {rigid['rotation_deg']:.2g}°"
+    return "—"
+
+
+def _status_span(text, status: str) -> str:
+    _, fg = ANALYSIS_STATUS_STYLES.get(status, ANALYSIS_STATUS_STYLES["N/A"])
+    return f'<b style="color:{fg};">{html.escape(str(text))}</b>'
+
+
+def _detail_html(c: "analysis.ComponentResult") -> str:
+    """행 선택 상세 — 구조 지표 + 기능/정착/변형률 breakdown (QTextBrowser HTML)."""
+    extras = c.extras or {}
+    lines = [
+        f"<b>{html.escape(c.name)}</b> ({html.escape(c.component_id)}) — "
+        + _status_span(c.status, c.status),
+        f"최대 변위 {c.max_disp:.4g} (임계값 {c.threshold:.4g}의 {c.ratio:.2f}배)"
+        f" @ 노드 #{c.max_disp_node}",
+        f"정점 {c.num_vertices}개 · 임계 초과 {len(c.over_indices)}개 · "
+        f"충격 점수 {c.max_score:.1f}/100",
+    ]
+    if c.material:
+        lines.append(f"재질: {html.escape(c.material)}")
+    rigid = extras.get("rigid")
+    if rigid:
+        lines.append(
+            f"강체 회전 {rigid['rotation_deg']:.3g}° · 영구 뒤틀림 RMS "
+            f"{rigid['residual_rms_mm']:.3g} mm(실스케일)"
+        )
+
+    func = extras.get("functional") or {}
+    ftype = func.get("type")
+    if ftype == "solar_panel":
+        lines.append(
+            "<br><b>[기능] 발전량</b> — 잔여 "
+            + _status_span(f"{func['power_frac'] * 100:.1f}%", func["verdict"])
+            + f"<br>법선 기울기 {func['tilt_deg']:.3g}° (cos {func['cos_factor']:.3f}) · "
+            f"손상 셀 면적 {func['dead_area_frac'] * 100:.1f}%"
+            f"<br>손실 {func['power_lost_w']:.0f} W / {func['p0_w']:.0f} W"
+        )
+    elif ftype == "antenna":
+        lines.append(
+            "<br><b>[기능] 통신 링크</b> — 손실 "
+            + _status_span(f"{func['loss_total_db']:.3g} dB", func["verdict"])
+            + f"<br>지향 이탈 {func['pointing_deg']:.3g}° / 빔폭 {func['beam_deg']:.3g}°"
+            f" (지향 {func['loss_point_db']:.3g} dB)"
+            f"<br>표면 오차 {func['surface_err_mm']:.3g} mm (Ruze {func['loss_ruze_db']:.3g} dB)"
+        )
+    elif ftype == "optical_tube":
+        s = func["strehl"]
+        s_txt = f"{s:.3g}" if s >= 0.001 else "<0.001"
+        lines.append(
+            "<br><b>[기능] 광학 상 품질</b> — 스트렐 비 "
+            + _status_span(s_txt, func["verdict"])
+            + f"<br>파면 오차 {func['wfe_um']:.3g} μm (Maréchal 근사, S≥0.8=회절한계)"
+            f"<br>광축 기울기 {func['axis_tilt_arcsec']:.3g}″ "
+            f"(지향 예산 {func['budget_arcsec']:.3g}″의 {func['budget_ratio']:.3g}배)"
+        )
+
+    settling = extras.get("settling") or {}
+    if settling.get("available"):
+        line = (
+            f"<br><b>[진동 정착]</b> 구간 {settling['settle_frac'] * 100:.0f}% 시점 정착 · "
+            f"잔류 진동 {settling['residual_ratio'] * 100:.1f}%"
+        )
+        if settling.get("oscillatory"):
+            if settling.get("zeta") is not None:
+                line += f" · 감쇠비 ζ={settling['zeta']:.3g} ({settling['cycles']} 사이클/구간)"
+            else:  # 진동은 검출됐으나 진폭이 유지/증가 → 감쇠비 산정 불가
+                line += f" · 감쇠 미검출(진폭 유지/증가, {settling.get('cycles', '?')} 사이클/구간)"
+        else:
+            line += " · 과감쇠(잔류 진동 미검출)"
+        lines.append(line)
+
+    strain = extras.get("strain") or {}
+    if strain.get("available"):
+        lines.append(
+            "<br><b>[변형률]</b> 피크 "
+            f"{strain['peak'] * 100:.3g}% / 잔류 {strain['residual'] * 100:.3g}% "
+            f"(항복 {strain['yield_strain'] * 100:.2g}%) → "
+            + _status_span(strain["verdict"], _STRAIN_STATUS.get(strain["verdict"], "N/A"))
+        )
+
+    anchor = FUNCTIONAL_ANCHORS.get(ftype)
+    if anchor:
+        lines.append(f'<br><i style="color:#888;">{anchor}</i>')
+    if c.notes:
+        lines.append(f'<span style="color:#777;">{html.escape(c.notes)}</span>')
+    return '<div style="font-size:12px;">' + "<br>".join(lines) + "</div>"
+
 MESH_FILTER = (
     "Mesh (*.vtk *.vtu *.obj *.stl *.ply *.off *.msh *.bdf *.nas *.fem "
     "*.inp *.mesh *.med *.node *.vol *.e *.exo *.dat *.ugrid *.su2 *.xdmf);;"
@@ -571,21 +685,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis_summary = QtWidgets.QLabel()
         self.analysis_summary.setWordWrap(True)
         alay.addWidget(self.analysis_summary)
-        self.analysis_table = QtWidgets.QTableWidget(0, 4)
-        self.analysis_table.setHorizontalHeaderLabels(["부품", "최대 변위", "임계값", "상태"])
-        self.analysis_table.horizontalHeader().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.Stretch
+        self.analysis_table = QtWidgets.QTableWidget(0, 5)
+        self.analysis_table.setHorizontalHeaderLabels(
+            ["부품", "최대 변위", "임계값", "상태", "기능 영향"]
         )
+        # 열은 내용 크기(부품명 잘림 방지), 넘치면 스크롤 — 스크롤바 UI는 숨기되
+        # 휠/드래그 스크롤은 동작한다.
+        self.analysis_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents
+        )
+        self.analysis_table.setTextElideMode(QtCore.Qt.ElideNone)
+        self.analysis_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.analysis_table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.analysis_table.verticalHeader().setVisible(False)
         self.analysis_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.analysis_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.analysis_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.analysis_table.itemSelectionChanged.connect(self._on_analysis_row_selected)
-        alay.addWidget(self.analysis_table, stretch=1)
-        self.analysis_detail = QtWidgets.QLabel("")
-        self.analysis_detail.setWordWrap(True)
-        self.analysis_detail.setStyleSheet("color:#555;")
-        alay.addWidget(self.analysis_detail)
+        alay.addWidget(self.analysis_table)  # stretch 없음 — 높이는 내용 맞춤(_fit_table_height)
+        # 행 선택 상세 — 표 바로 아래가 메인 영역 (기능/정착/변형률 breakdown HTML)
+        self.analysis_detail = QtWidgets.QTextBrowser()
+        self.analysis_detail.setOpenExternalLinks(False)
+        self.analysis_detail.setPlaceholderText("행을 선택하면 부품 상세가 표시됩니다.")
+        self.analysis_detail.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.analysis_detail.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.analysis_detail.setStyleSheet("QTextBrowser{border:1px solid #ddd; color:#333;}")
+        alay.addWidget(self.analysis_detail, stretch=1)
         self.left_tabs.addTab(analysis_tab, "분석")
 
         # 탭 1: 챗 — 대화 뷰 (질문 전송 시 이 탭으로 자동 전환)
@@ -620,7 +745,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "background:#f5f5f5; color:#555; padding:6px; border-radius:4px;"
         )
         self.analysis_table.setRowCount(0)
-        self.analysis_detail.setText("")
+        self._fit_table_height()
+        self.analysis_detail.clear()
 
     def _update_analysis_panel(self, result: analysis.AnalysisResult):
         bg, fg = ANALYSIS_STATUS_STYLES.get(result.verdict, ANALYSIS_STATUS_STYLES["N/A"])
@@ -638,9 +764,13 @@ class MainWindow(QtWidgets.QMainWindow):
             f"background:{bg}; color:{fg}; padding:6px; border-radius:4px; font-weight:bold;"
         )
 
+        prev_row = self.analysis_table.currentRow()
         self.analysis_table.setRowCount(len(result.components))
         for i, c in enumerate(result.components):
-            cells = [c.name, f"{c.max_disp:.4g}", f"{c.threshold:.4g}", c.status]
+            cells = [
+                c.name, f"{c.max_disp:.4g}", f"{c.threshold:.4g}", c.status,
+                _functional_brief(c),
+            ]
             for j, text in enumerate(cells):
                 item = QtWidgets.QTableWidgetItem(text)
                 if j == 3:
@@ -648,7 +778,22 @@ class MainWindow(QtWidgets.QMainWindow):
                     item.setBackground(QtGui.QColor(sbg))
                     item.setForeground(QtGui.QColor(sfg))
                 self.analysis_table.setItem(i, j, item)
-        self.analysis_detail.setText("행을 선택하면 부품 상세가 표시됩니다.")
+        self._fit_table_height()
+        # 재-Simulate로 행 수가 같으면 Qt가 선택을 유지한 채 시그널을 안 쏜다 —
+        # 유지된 선택은 새 분석 내용으로 상세를 직접 갱신, 아니면 초기화.
+        if 0 <= prev_row < len(result.components):
+            self.analysis_table.selectRow(prev_row)
+            self.analysis_detail.setHtml(_detail_html(result.components[prev_row]))
+        else:
+            self.analysis_table.clearSelection()
+            self.analysis_detail.clear()
+
+    def _fit_table_height(self):
+        """표 높이를 내용(헤더+행)에 맞춘다 — 상세 영역이 표 바로 아래에 오도록."""
+        h = self.analysis_table.horizontalHeader().height() + 2 * self.analysis_table.frameWidth()
+        for r in range(self.analysis_table.rowCount()):
+            h += self.analysis_table.rowHeight(r)
+        self.analysis_table.setFixedHeight(min(h, 280))
 
     def _on_analysis_row_selected(self):
         if self.analysis is None:
@@ -656,18 +801,7 @@ class MainWindow(QtWidgets.QMainWindow):
         row = self.analysis_table.currentRow()
         if not 0 <= row < len(self.analysis.components):
             return
-        c = self.analysis.components[row]
-        lines = [
-            f"{c.name} ({c.component_id}) — {c.status}",
-            f"정점 {c.num_vertices}개 · 임계 초과 {len(c.over_indices)}개",
-            f"최대 변위 {c.max_disp:.4g} (임계값 대비 {c.ratio:.2f}배) @ 노드 #{c.max_disp_node}",
-            f"충격 점수 {c.max_score:.1f}/100",
-        ]
-        if c.material:
-            lines.append(f"재질: {c.material}")
-        if c.notes:
-            lines.append(c.notes)
-        self.analysis_detail.setText("\n".join(lines))
+        self.analysis_detail.setHtml(_detail_html(self.analysis.components[row]))
 
     def _show_analysis_overlays(self, result: analysis.AnalysisResult):
         """분석 3D 마커를 애니메이션 메쉬 위에 추가.
@@ -972,14 +1106,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if reset_camera:
             self.plotter.reset_camera()
 
-    def _enable_picking(self):
-        # 표면 위 클릭 지점 → 최근접 정점 인덱스로 환산.
-        # pyvista 최신 버전은 중복 enable을 PyVistaPickingError로 막는다 —
-        # (시뮬/리셋마다 재호출되므로) 기존 피킹을 먼저 해제한다.
+    def _disable_picking(self):
+        # 결과 재생 중에는 클릭이 카메라 조작 전용 — 픽 마커가 찍히지 않게 한다.
         try:
             self.plotter.disable_picking()
         except Exception:
             pass
+
+    def _enable_picking(self):
+        # 표면 위 클릭 지점 → 최근접 정점 인덱스로 환산.
+        # pyvista 최신 버전은 중복 enable을 PyVistaPickingError로 막는다 —
+        # (리셋/시나리오 로드마다 재호출되므로) 기존 피킹을 먼저 해제한다.
+        self._disable_picking()
         self.plotter.enable_point_picking(
             callback=self._on_pick, show_message=False, left_clicking=True,
             use_picker=True,
@@ -988,26 +1126,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_pick(self, point, *args):
         if self.vertices is None or point is None:
             return
+        if self.frames is not None:
+            return  # 픽은 Simulate 전(원본 표시 상태)에만 — 결과 재생 중 방어
         point = np.asarray(point, dtype=np.float64).reshape(-1)[:3]
-        # 클릭 좌표는 "현재 표시 중인 프레임" 표면 위 → 그 좌표로 최근접 노드를 찾는다
-        # (전역 인덱스는 프레임 무관하게 동일 → BE impact_node 일치). 표면 정점만 후보로
-        # (체적 메쉬 내부 정점으로 스냅 방지).
-        base = self.frames[self.anim_idx] if self.frames is not None else self.vertices
+        # 원본 메쉬 표면 정점만 후보로 (체적 메쉬 내부 정점으로 스냅 방지).
         if self.faces is not None and len(self.faces):
             surf = np.unique(self.faces)
-            idx = int(surf[np.argmin(np.linalg.norm(base[surf] - point, axis=1))])
+            idx = int(surf[np.argmin(np.linalg.norm(self.vertices[surf] - point, axis=1))])
         else:
-            idx = int(np.argmin(np.linalg.norm(base - point, axis=1)))
+            idx = int(np.argmin(np.linalg.norm(self.vertices - point, axis=1)))
         self.impact_node = idx
         self.node_label.setText(f"Impact node: {idx}  @ {self.vertices[idx].round(3).tolist()}")
-        self._highlight_node(idx, center=base[idx])
+        self._highlight_node(idx)
 
-    def _highlight_node(self, idx: int, center=None):
+    def _highlight_node(self, idx: int):
         if self._pick_actor is not None:
             self.plotter.remove_actor(self._pick_actor)
         diag = float(np.linalg.norm(self.vertices.max(0) - self.vertices.min(0))) or 1.0
-        c = self.vertices[idx] if center is None else center
-        sphere = pv.Sphere(radius=0.02 * diag, center=c)
+        sphere = pv.Sphere(radius=0.02 * diag, center=self.vertices[idx])
         self._pick_actor = self.plotter.add_mesh(sphere, color="#e6550d", name="impact")
 
     # ---- 시뮬레이션 / 애니메이션 -------------------------------------------
@@ -1100,7 +1236,9 @@ class MainWindow(QtWidgets.QMainWindow):
             scalar_bar_args={"title": "|displacement|"}, reset_camera=False,
         )
         # 카메라는 로드 시 이미 맞춰졌으므로 Simulate마다 리셋하지 않는다(시점 보존).
-        self._enable_picking()  # 재픽 가능(현재 표시 프레임 기준)
+        # 결과 재생 중에는 피킹 해제 — 회전/확대 클릭에 픽 마커가 찍히지 않게.
+        # 충격점을 바꾸려면 Reset(픽 재활성화) 후 선택한다.
+        self._disable_picking()
 
         T = len(frames)
         self.timeline.setEnabled(T > 1)
@@ -1118,7 +1256,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 동기 계산이지만 (T,N) 벡터 연산 몇 번이라 로컬 metal_dent 시뮬(이미 GUI
         # 스레드에서 돈다)보다 저렴 — 워커 불필요.
         self.analysis = analysis.compute_analysis(
-            frames, self.vertices, self._last_action,
+            frames, self.vertices, self.faces, self._last_action,
             self.components_def, "dummy" if dummy else "live",
         )
         self._update_analysis_panel(self.analysis)

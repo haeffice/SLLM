@@ -45,6 +45,16 @@ BASE_URL = (
 
 # 병합 순서 = vertex_range 순서. threshold_fraction은 정규화 후 bbox 대각선(2.0)
 # 대비 비율 — 취약 부품일수록 낮다. 수치는 데모용 상대치(실측 물성 아님).
+#
+# functional 블록 = fe/analysis.py가 type으로 디스패치하는 기능 영향 분석 상수.
+# 출처(데모 근사, 실제 허블 스펙 기반):
+#   - antenna: HGA 빔폭 "over four degrees", S-band 2287.5 MHz(λ≈13.1 cm)
+#     — NASA SM3A Media Reference Guide (asd.gsfc.nasa.gov, HST Systems)
+#   - solar_panel: SA3 GaAs 어레이 발전량 ≈5,000 W — NASA Hubble electrical-power
+#   - optical_tube: 지향 안정도 0.007 arcsec RMS/24h — NASA Hubble pointing-control;
+#     광학계 f/24, 관측 λ≈550 nm
+#   - yield_strain: Al 6061-T6 ε_y=σ_y/E≈0.40% (MatWeb); 태양전지 셀은 취성
+#     반도체 웨이퍼라 더 낮게 0.2% (데모 근사)
 PARTS = [
     {
         "file": "Main body.stl",
@@ -54,6 +64,12 @@ PARTS = [
         "fragility": "low",
         "threshold_fraction": 0.05,
         "notes": "구조 강성이 높은 원통 경통 — 임계값이 가장 높다.",
+        "functional": {
+            "type": "optical_tube",
+            "pointing_budget_arcsec": 0.007,
+            "obs_wavelength_nm": 550,
+            "f_number": 24,
+        },
     },
     {
         "file": "Solar panels.stl",
@@ -63,6 +79,8 @@ PARTS = [
         "fragility": "high",
         "threshold_fraction": 0.015,
         "notes": "얇은 패널 — 점 충격에 셀 균열이 쉽게 발생, 임계값 최저.",
+        "yield_strain": 0.002,
+        "functional": {"type": "solar_panel", "p0_w": 5000},
     },
     {
         "file": "Radio dishes.stl",
@@ -72,6 +90,7 @@ PARTS = [
         "fragility": "high",
         "threshold_fraction": 0.02,
         "notes": "접시 곡면 변형 시 지향성 상실 — 임계값 낮음.",
+        "functional": {"type": "antenna", "beam_deg": 4.0, "wavelength_m": 0.131},
     },
     {
         "file": "Cover hatch.stl",
@@ -92,6 +111,11 @@ PARTS = [
         "notes": "경통-후방 장비부 결합 링 — 이음새 어긋남 주의.",
     },
 ]
+
+# 실물 환산 배율: 허블 전장 13.2 m ↔ 정규화 모델 (bbox 대각선 2.0) — 데모 근사.
+REAL_SCALE_M_PER_UNIT = 6.9
+# 기본 항복 변형률 (Al 6061-T6) — 부품별 yield_strain으로 덮어쓸 수 있음.
+DEFAULT_YIELD_STRAIN = 0.004
 
 NORMALIZED_DIAG = 2.0  # 정규화 목표 bbox 대각선 (내장 plate/can과 동일 스케일)
 
@@ -193,7 +217,7 @@ def main() -> None:
 
     components = []
     for part, (pid, start, end) in zip(PARTS, ranges):
-        components.append({
+        comp = {
             "id": pid,
             "name": part["name"],
             "material": part["material"],
@@ -201,14 +225,19 @@ def main() -> None:
             "notes": part["notes"],
             "damage_threshold": round(part["threshold_fraction"] * NORMALIZED_DIAG, 6),
             "warn_ratio": 0.7,
+            "yield_strain": part.get("yield_strain", DEFAULT_YIELD_STRAIN),
             "vertex_range": [start, end],
-        })
+        }
+        if "functional" in part:
+            comp["functional"] = part["functional"]
+        components.append(comp)
     doc = {
         "schema_version": 1,
         "asset": "hubble.obj",
         "display_name": "허블 우주망원경",
         "source": f"{BASE_URL} (commit {COMMIT}, NASA public domain)",
         "normalized": f"centered at origin, bbox diagonal = {NORMALIZED_DIAG}",
+        "real_scale_m_per_unit": REAL_SCALE_M_PER_UNIT,
         "default_impact_node": int(default_impact),
         "default_radius": DEFAULT_RADIUS,
         "components": components,
