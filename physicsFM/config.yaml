@@ -1,0 +1,47 @@
+# physicsFM 전 파이프라인 단일 설정.
+# 실행 시 --set key.subkey=value 로 개별 항목 오버라이드 가능 (예: --set train.steps=100).
+
+data:
+  h5: data/rollouts.h5
+  train_meshes: [plate41, can48x24, smartphone]   # 학습 8:1:1 분할
+  eval_meshes: [hubble]                           # 평가(test) 전용 — 일반화 측정
+  rollouts_per_mesh: 150
+  eval_rollouts_per_mesh: 50
+  dt_target_s: 0.012          # 고정 물리 dt 목표 (D1) — frames 수가 (h,e)에 따라 변함
+  g: 9.81                     # mesh-units/s² (실스케일 아님 — README 참고)
+  drop_height: [0.3, 2.5]     # loguniform (mesh units)
+  restitution: [0.0, 0.65]    # uniform — 0/1/2 바운스 레짐 포함
+  scale: [0.5, 1.5]           # uniform, 변형 배율
+  hold_frac: 0.3              # hold-extension: 정착 프레임 복제 U{0..hold_frac·T}
+  seed: 42
+
+graph:
+  history: 1                  # 속도 히스토리 (v0=1, DeepMind cloth 방식)
+  floor_delta: null           # null → stats의 3×max 스텝변위로 자동 산출
+
+labels:
+  eos_eps: 1.0e-3             # settled(t) = max_{t'>=t} KE <= eps·max KE
+
+model:
+  backbone: local_mgn         # local_mgn | physicsnemo_mgn (ImportError 시 local 폴백)
+  hidden_dim: 128
+  num_layers: 15
+  mlp_layers: 2
+  grad_checkpoint: false      # OOM 시 true
+
+train:
+  batch_size: 2
+  steps: 50000
+  lr: 1.0e-4
+  lr_min: 1.0e-6              # ExponentialLR 로 steps 에 걸쳐 도달
+  noise_std: 3.0e-3           # 입력 위치 노이즈 (mesh units, DeepMind cloth 표준)
+  eos_weight: 0.1             # 보조 eos BCE 가중치
+  amp: true                   # bfloat16 autocast (Ampere, GradScaler 불필요)
+  num_workers: 4
+  val_every: 1000
+  ckpt_every: 5000
+  log_every: 100
+
+rollout:
+  eos_threshold: 0.5
+  eos_patience: 5             # 연속 스텝 수 — 넘으면 정지(eos)
