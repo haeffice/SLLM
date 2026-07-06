@@ -1,0 +1,7 @@
+# --- FastAPI / serving (WebSocket support comes from uvicorn[standard]) -----
+fastapi
+uvicorn[standard]
+
+# --- model device handling + PCM decoding -----------------------------------
+torch
+numpy

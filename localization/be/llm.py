@@ -47,6 +47,16 @@ def default_model_id() -> str:
     return enabled_model_ids()[0]
 
 
+def tags_for(model_id: str) -> list[str]:
+    """Architecture tags for a model id, used by the FE chip row.
+
+    Static class metadata, so it resolves regardless of load status (the FE
+    can show the chips while the model is still loading).
+    """
+    cls = REGISTRY.get(model_id)
+    return list(getattr(cls, "tags", []) or []) if cls is not None else []
+
+
 def device_for(model_id: str) -> torch.device:
     env_key = f"{model_id.upper()}_DEVICE"
     explicit = os.environ.get(env_key)

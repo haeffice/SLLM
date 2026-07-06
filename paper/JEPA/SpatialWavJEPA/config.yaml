@@ -1,0 +1,58 @@
+# Spatial WavJEPA (WavJEPA-Nat) SSL pre-training config.
+# Single source of truth — run: bash run_train_SpatialWavJEPA.sh config.yaml
+
+data:
+  # Manifest JSON: {"data": [{"audio_id": "...wav", "reverb_id": "...npy"}, ...]}
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  audio_root: /path/to/audioset_wav     # mono AudioSet wavs (any sample rate)
+  reverb_root: /path/to/brir_npy        # binaural BRIR .npy, shape (2, R)
+  sample_rate: 16000
+  process_audio_seconds: 2.01           # 32160 samples -> 200 patches/channel
+                                        # (do NOT use 2.0 -> 199, breaks 2N=400)
+
+model:
+  encoder_d_model: 768
+  encoder_nhead: 12
+  encoder_dim_feedforward: 3072
+  encoder_num_layers: 12
+  decoder_d_model: 384
+  decoder_nhead: 12
+  decoder_dim_feedforward: 1536
+  decoder_num_layers: 12
+  average_top_k_layers: 12              # data2vec-2 top-K teacher target
+
+masking:                                # WavJEPA-paper exact (arXiv:2509.23238)
+  context_mask_prob: 0.065              # p_context
+  context_mask_length: 10               # M_context (patches)
+  target_prob: 0.025                    # p_target
+  target_length: 10                     # M_target (patches)
+  target_masks_per_context: 8           # K = 8 targets
+  ratio_cutoff: 0.10                    # >= 10% of indices are context
+  masker_kind: time-inverse
+
+ema:
+  ema_decay: 0.999
+  ema_end_decay: 0.99999
+  ema_anneal_end_step: 100000           # linear tau 0.999 -> 0.99999
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 2.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.98
+  weight_decay: 0.04
+  warmup_steps: 100000
+  max_steps: 375000
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 8        # x world_size -> effective batch ~128
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/spatial_wavjepa
+  logging_steps: 100
+  save_steps: 5000
+  eval_steps: 5000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional student .pt warm-start

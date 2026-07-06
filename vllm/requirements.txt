@@ -1,0 +1,21 @@
+# --- FastAPI / serving ----------------------------------------------------
+fastapi
+uvicorn[standard]
+pydantic
+
+# --- vLLM CPU backend ------------------------------------------------------
+# Prebuilt CPU wheels are built with AVX512 and run on the target AMX Xeon
+# (Python 3.10-3.13, gcc>=12.3). They will NOT run on an AVX2-only dev box.
+# Install the CPU wheel matching the latest release, e.g.:
+#
+#   export VLLM_VERSION=$(curl -s \
+#     https://api.github.com/repos/vllm-project/vllm/releases/latest \
+#     | jq -r .tag_name | sed 's/^v//')
+#   uv pip install \
+#     https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl \
+#     --torch-backend cpu
+#
+# (left unpinned here on purpose — pick the wheel for your server)
+# vllm
+
+# runner.py and preflight use stdlib only — no extra client deps.

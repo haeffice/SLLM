@@ -1,0 +1,66 @@
+# V-JEPA 2.1 self-supervised video pre-training config.
+# Single source of truth — run: bash run_train_VJEPA21.sh config.yaml
+# Builds on the sibling ../VJEPA2 (encoder + training machinery imported).
+
+data:
+  # Manifest JSON: {"data": [{"video_id": "clip0001.mp4"}, ...]}
+  # Images enter as 1-frame clips (multi-modal training) — a single-frame
+  # (1,H,W,3) .npy is automatically tiled to num_frames.
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  video_root: /path/to/videos           # video_path = video_root/video_id
+  num_frames: 16                        # frames sampled per clip
+  img_size: 256                         # spatial resolution (square)
+
+model:
+  variant: vit_large                    # vit_large | vit_huge | vit_giant | vit_gigantic
+  patch_size: 16
+  tubelet_size: 2                       # temporal patch -> N = (T/2)(H/16)(W/16)
+  use_rope: true                        # 3D rotary pos-emb (V-JEPA 2 "_rope")
+  predictor_embed_dim: 384
+  predictor_depth: 12
+  predictor_num_heads: 12
+  predictor_mlp_ratio: 4.0
+
+masking:                                # V-JEPA 2 multiblock-3d
+  mask_ratios: [0.15, 0.7]              # short-range + long-range groups
+  mask_blocks_per_ratio: [8, 2]
+  min_context_ratio: 0.1                # >=10% tokens kept visible
+
+recipe:                                 # ==== the V-JEPA 2.1 ingredients ====
+  dense_loss: true                      # (i) loss over ALL tokens, not just masked
+  context_loss_weight: 0.1              #     down-weight visible context tokens
+  deep_supervision_layers: [8, 16, 24]  # (ii) 1-indexed encoder depths to also predict
+  deep_supervision_weight: 1.0          #     weight of the deep-supervision term
+
+ema:                                    # linear tau anneal 0.998 -> 1.0
+  ema_decay: 0.998
+  ema_end_decay: 1.0
+  ema_anneal_end_step: 90000
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 6.25e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 0.04
+  warmup_steps: 12000
+  max_steps: 90000
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8        # x world_size -> effective batch
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/vjepa21
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional student .pt warm-start
+
+eval:                                   # used by eval_vjepa21.py (attentive probe)
+  train_manifest: /path/to/probe_train.json    # {"data":[{"video_id","label"},...]}
+  test_manifest: /path/to/probe_test.json
+  video_root: /path/to/videos
+  num_classes: 10

@@ -1,0 +1,53 @@
+# PhaseCoder supervised training config (single source of truth).
+# Run: bash run_train_PhaseCoder.sh config.yaml
+#
+# Defaults follow the paper (D=256, 5 blocks, 4 heads, FFN 256 → ~6M params)
+# and the synthetic dataset from make_phasecoder_dataset.py. The encoder is
+# geometry-agnostic: the dataset mixes 3–8 mic arrays with random layouts.
+
+data:
+  # Manifests produced by make_phasecoder_dataset.py (each has a "meta" block).
+  train_manifest: data/train/manifest.json
+  valid_manifest:                       # optional; "" / null disables eval
+
+model:
+  embed_dim: 256                        # D
+  n_blocks: 5                           # transformer blocks
+  n_heads: 4                            # attention heads
+  ffn_dim: 256                          # FFN inner dim (1× expansion)
+  dropout: 0.0
+  n_fft: 256                            # Hann window 256, 129 bins
+  hop: 128                              # 50% overlap
+  n_azimuth: 38                         # 37 angle bins over [0,360) + no-source
+  n_elevation: 18                       # 17 angle bins over [-90,90] + no-source
+  n_distance: 13                        # 12 distance bins + no-source
+  dist_min: 0.5                         # m — distance-bin range
+  dist_max: 6.5
+
+loss:                                   # L = λ_az·CE + λ_el·CE + λ_di·CE
+  lambda_az: 1.0
+  lambda_el: 1.0
+  lambda_di: 0.5
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  num_train_epochs: 50
+  max_steps: -1                         # >0 overrides num_train_epochs
+  learning_rate: 1.0e-4                 # paper stage-1 peak LR
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 32
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: ckpts/phasecoder
+  logging_steps: 50
+  save_steps: 1000
+  eval_steps: 1000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional PhaseCoder .pt warm-start

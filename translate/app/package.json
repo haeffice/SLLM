@@ -1,0 +1,23 @@
+{
+  "name": "sr-live-translation",
+  "productName": "SR Live Translation",
+  "version": "0.3.4",
+  "description": "Real-time speech-translation desktop client (Electron)",
+  "author": "SLLM",
+  "main": "src/main/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "gen:config": "node scripts/gen-config.js",
+    "start": "npm run gen:config && electron .",
+    "prebuild": "npm run gen:config",
+    "version:bump": "npm version patch --no-git-tag-version",
+    "build:win": "npm run gen:config && npm run version:bump && electron-builder --win",
+    "build:win:nobump": "npm run gen:config && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "github:castlabs/electron-releases#v31.7.7+wvcus",
+    "electron-builder": "^26.8.1"
+  }
+}

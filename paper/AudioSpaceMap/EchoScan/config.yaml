@@ -1,0 +1,47 @@
+# EchoScan supervised training config (single source of truth).
+# Run: bash run_train_EchoScan.sh config.yaml
+#
+# Paper resolution defaults (1024×1024 floorplan, 512 height, 1024-sample RIR)
+# need a GPU. For a CPU smoke test see make_echoscan_dataset.py + README and
+# shrink floorplan_size/height_size/rir_length to match the generated labels.
+
+data:
+  # Manifests produced by make_echoscan_dataset.py (each has a "meta" block).
+  train_manifest: /path/to/data/train/manifest.json
+  valid_manifest:                       # optional; "" / null disables eval
+  n_mics: 6                             # 6-mic circular array (5 cm radius)
+  rir_length: 1024                      # samples @ 8 kHz, direct sound removed
+  floorplan_size: 1024                  # b — floorplan map is b×b (±10.24 m)
+  height_size: 512                      # h — height profile (±5.12 m)
+                                        # MUST equal the dataset's b/h (meta).
+
+model:
+  ma_proj_dim: 256                      # per-pooling projection in Multi-Aggregation
+  decoder_init_size: 16                 # floorplan decoder starts from 16×16
+
+loss:                                   # L = MSE(LW) + alpha*Dice(LW) + beta*MSE(H)
+  alpha: 0.3
+  beta: 1.0
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  num_train_epochs: 50
+  max_steps: -1                         # >0 overrides num_train_epochs
+  learning_rate: 1.0e-3
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 16
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/echoscan
+  logging_steps: 50
+  save_steps: 1000
+  eval_steps: 1000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional EchoScan .pt warm-start

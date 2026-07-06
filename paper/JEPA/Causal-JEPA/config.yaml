@@ -1,0 +1,59 @@
+# Causal-JEPA object-centric pre-training config.
+# Single source of truth — run: bash run_train_CausalJEPA.sh config.yaml
+
+data:
+  # Manifest JSON: {"data": [{"video_id": "clip0001.npy"}, ...]}
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional; "" / null disables eval
+  video_root: /path/to/videos           # video_path = video_root/video_id
+  num_frames: 16                        # window length T (history + future)
+  img_size: 64                          # square; must be divisible by 8
+
+model:
+  in_chans: 3
+  enc_channels: [32, 64, 64, 64]        # 4-layer CNN, /8 spatial downsample
+  num_slots: 7                          # objects per scene (CLEVRER-like)
+  slot_dim: 128
+  slot_iters: 3
+  slot_hidden: 128
+  dec_hidden: 64
+  history_len: 6                        # frames [6, 16) are the predicted future
+  # slot predictor (ViT). paper: dim 1024 / depth 6 / 16 heads / mlp 2048.
+  pred_dim: 256
+  pred_depth: 6
+  pred_heads: 8
+  pred_mlp_ratio: 4.0
+  freeze_encoder: false                 # true + init_from reproduces frozen-g
+
+masking:
+  max_masked_slots: 4                   # object-level intervention budget / history frame
+
+objective:
+  recon_weight: 1.0                     # broadcast-decoder reconstruction (object learning)
+  history_weight: 1.0                   # masked-object completion (latent intervention)
+  future_weight: 1.0                    # future slot prediction
+
+optim:                                  # AdamW + linear-warmup + cosine decay
+  learning_rate: 5.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  weight_decay: 0.0
+  warmup_steps: 5000
+  max_steps: 100000
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/causal_jepa
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:                     # null = keep all
+  num_workers: 4
+  seed: 42
+  init_from:                            # optional model .pt warm-start (e.g. frozen slot encoder)
+
+eval:                                   # used by eval_causal_jepa.py (rollout / MPC)
+  test_manifest: /path/to/test.json
+  video_root: /path/to/videos

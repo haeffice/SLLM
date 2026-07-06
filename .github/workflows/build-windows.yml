@@ -1,0 +1,102 @@
+name: Build Windows app
+
+# 빌드 트리거:
+#  - 수동 실행(workflow_dispatch): 서버 URL을 입력해 빌드 시점에 고정.
+#    (수동 실행 버튼은 워크플로가 기본 브랜치(main)에 있어야 UI에 노출됨.
+#     기본 브랜치에 없으면: gh workflow run build-windows.yml --ref translate -f server_url=...)
+#  - translate 브랜치에 translate/** 또는 이 워크플로가 바뀌어 push될 때 자동 빌드.
+#    이때 서버 URL은 레포 변수 vars.SLLM_SERVER_URL 을 사용(미설정 시 빈 값 → 앱 옵션에서 런타임 지정).
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Baked-in server URL, e.g. https://192.168.0.42:9001 (blank = set in-app later)"
+        required: false
+        default: ""
+      bump:
+        description: "Auto-bump patch before building. Set false to build the committed version as-is (e.g. a manual 0.3.0 release)."
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches: [translate]
+    paths:
+      - "translate/**"
+      - ".github/workflows/build-windows.yml"
+
+# The job reads the repo, uploads an artifact (which uses the Actions runtime
+# token, not these scopes), and — on `translate` — pushes the bumped version
+# back to the branch, which needs write access to repo contents.
+permissions:
+  contents: write
+
+# A newer push to the same ref supersedes an in-flight build.
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: translate/app
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          # Lockfile lives in the subdir; setup-node resolves this from the repo
+          # root (GITHUB_WORKSPACE), not working-directory — so it must be explicit.
+          cache: "npm"
+          cache-dependency-path: translate/app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NSIS installer
+        shell: bash
+        env:
+          # workflow_dispatch 입력 우선, 없으면 레포 변수로 폴백.
+          SLLM_SERVER_URL: ${{ inputs.server_url || vars.SLLM_SERVER_URL }}
+          # 'false'면 patch bump을 건너뛰고 커밋된 버전을 그대로 빌드(수동 마일스톤
+          # 릴리스용). push 이벤트에는 inputs가 없어 빈 값 → 기본 분기에서 bump 수행.
+          BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$BUMP" = "false" ]; then
+            echo "no-bump: building the committed version as-is"
+            npm run build:win:nobump
+          else
+            npm run build:win
+          fi
+
+      # Read the version that was actually built (post-bump unless bump=false) so
+      # the artifact name matches the installer.
+      - name: Read app version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      # Persist the bump: build:win already ran `npm version patch`, mutating
+      # package.json + package-lock.json on the runner. Commit those back so the
+      # next build increments from here (0.2.1 → 0.2.2 …) instead of always
+      # producing 0.2.1. `[skip ci]` keeps this commit from re-triggering the
+      # translate/** push build (infinite loop). Guarded to translate so a
+      # workflow_dispatch on another branch never writes to it.
+      - name: Commit bumped version back
+        if: github.ref_name == 'translate'
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git diff --cached --quiet || git commit -m "ci(app): bump version to v${{ steps.ver.outputs.version }} [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sr-live-translation-windows-v${{ steps.ver.outputs.version }}
+          path: translate/app/dist/*.exe
+          if-no-files-found: error

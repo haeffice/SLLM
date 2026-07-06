@@ -13,7 +13,7 @@ set -euo pipefail
 # =============================================================================
 # 1) BAT 가중치 경로 — 사용자 환경에 맞게 수정 (또는 미리 export)
 # =============================================================================
-export BAT_LLAMA_PATH="${BAT_LLAMA_PATH:-/path/to/Llama-2-7b-hf}"
+export BAT_LLM_PATH="${BAT_LLM_PATH:-/path/to/Llama-2-7b-hf}"
 export BAT_ENCODER_CKPT="${BAT_ENCODER_CKPT:-/path/to/SpatialAST/finetuned.pth}"
 export BAT_PROJECTOR_CKPT="${BAT_PROJECTOR_CKPT:-/path/to/BAT/model.pt}"
 
@@ -39,7 +39,7 @@ cd "$BE_DIR"
 # --- 가중치 경로 사전 점검 ----------------------------------------------------
 echo "==> resolved checkpoint paths"
 missing=0
-for var in BAT_LLAMA_PATH BAT_ENCODER_CKPT BAT_PROJECTOR_CKPT; do
+for var in BAT_LLM_PATH BAT_ENCODER_CKPT BAT_PROJECTOR_CKPT; do
     val="${!var}"
     if [[ ! -e "$val" ]]; then
         echo "    [MISSING] $var = $val"

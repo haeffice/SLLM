@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src https: http: wss: ws:; img-src 'self' data:; frame-src https: http:;"
+    />
+    <title>SR Live Translation</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <nav id="sidebar">
+        <div class="brand">SR Live Translation</div>
+        <button class="nav-item" data-feature="translate">실시간 번역</button>
+      </nav>
+      <main id="content"></main>
+    </div>
+
+    <!-- plain scripts (no bundler / ESM) loaded in dependency order -->
+    <script src="net/client.js"></script>
+    <script src="ui/status-dot.js"></script>
+    <script src="ui/tags.js"></script>
+    <script src="ui/overlay-band.js"></script>
+    <script src="audio/capture.js"></script>
+    <script src="settings/settings.js"></script>
+    <script src="views/translate-view.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

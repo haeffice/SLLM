@@ -1,0 +1,613 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1f2328;
+}
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* ---- sidebar (Notion-style) ---- */
+#sidebar {
+  width: 240px;
+  flex: 0 0 240px;
+  background: #f7f7f5;
+  border-right: 1px solid #e8e8e6;
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.brand {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 6px 8px 14px;
+  color: #4a4a46;
+}
+.nav-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #37352f;
+  cursor: pointer;
+}
+.nav-item:hover {
+  background: #ececea;
+}
+.nav-item.active {
+  background: #e3e3e0;
+  font-weight: 600;
+}
+
+/* ---- content ---- */
+#content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.placeholder {
+  margin: auto;
+  color: #9b9a97;
+  font-size: 15px;
+}
+
+/* ---- translate view ---- */
+.translate-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8e8e6;
+}
+.nav-btns {
+  display: flex;
+  gap: 2px;
+}
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e0e0dd;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.icon-btn:hover {
+  background: #f2f2f0;
+}
+.search-form {
+  flex: 1;
+  min-width: 200px;
+}
+.search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d6d6d3;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ctrl-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e0e0dd;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctrl-btn:hover {
+  background: #f2f2f0;
+}
+.ctrl-btn.active {
+  background: #2383e2;
+  color: #fff;
+  border-color: #2383e2;
+}
+/* Gear icon button (옵션) — inline SVG centered in the button. */
+.ctrl-btn.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+.ctrl-btn.gear svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Sliding toggle switch (language direction / task). Always a blue-bordered
+   white pill with a white knob; the current value shows in black on the side
+   opposite the knob. */
+.toggle-switch {
+  position: relative;
+  width: 88px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 2px solid #2383e2;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+/* Direction toggle (EN→KO/KO→EN) sits a bit wider; task toggle (번역/전사) a bit
+   narrower — same combined width as two default 88px pills. */
+.toggle-switch.lang {
+  width: 100px;
+}
+.toggle-switch.task {
+  width: 76px;
+}
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #2383e2;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: left 0.15s ease;
+}
+.toggle-switch.is-right .toggle-knob {
+  left: calc(100% - 22px);
+}
+.toggle-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  pointer-events: none;
+}
+.toggle-switch:not(.is-right) .toggle-label {
+  justify-content: flex-end;
+  padding-right: 10px; /* knob left → label on the right */
+}
+.toggle-switch.is-right .toggle-label {
+  justify-content: flex-start;
+  padding-left: 10px; /* knob right → label on the left */
+}
+.tags-row {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: #eef2f7;
+  border: 1px solid #dbe3ec;
+  border-radius: 999px;
+  color: #4a5568;
+}
+
+/* ---- status dot ---- */
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 2px solid #b9b9b5;
+  background: transparent;
+}
+.status-dot--ok {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+.status-dot--warn {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+.status-dot--err {
+  background: #a855f7;
+  border-color: #a855f7;
+}
+
+/* ---- browser stage + overlay band ---- */
+.browser-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.embedded-browser {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.overlay-band {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none; /* empty areas pass clicks through to the browser */
+}
+.overlay-panel {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto; /* the panel is interactive: scroll + drag/resize */
+  /* alpha set inline by overlay-band.js; default opaque (transparency 0%) */
+  background: rgba(241, 243, 245, var(--band-alpha, 1)); /* #f1f3f5 */
+  border: 1px solid #000;
+  border-radius: 8px; /* drag mode; default mode overrides to square (see below) */
+  overflow: hidden;
+}
+/* Default: a square rectangle filling the full browser stage at the bottom
+   (no margins, no rounded corners; height set inline). */
+.overlay-panel.mode-default {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 0;
+}
+/* Drag: free-floating; left/top/width/height set inline by overlay-band.js. */
+
+/* Top strip: vertical-resize (default) / move (drag) handle + action button. */
+/* position:relative WITHOUT z-index → not a stacking context, so the action
+   button's z-index can sit above the resize handles (below) while the rest of
+   the header stays beneath the top-edge handle. */
+.overlay-header {
+  position: relative;
+  flex: 0 0 auto;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+}
+.overlay-panel.mode-default .overlay-header {
+  cursor: ns-resize;
+}
+.overlay-panel.mode-drag .overlay-header {
+  cursor: move;
+}
+/* Mode toggle: pop-out (→ drag) / close (→ docked). position+z-index keeps it
+   clickable above the resize handles (z-index:5). */
+.overlay-action {
+  position: relative;
+  z-index: 6;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #1f2328;
+  cursor: pointer;
+}
+.overlay-action:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+.overlay-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Edge/corner resize handles — only active in drag mode (kept inside the
+   panel's overflow:hidden box, so a few px in from each edge). */
+.overlay-handles {
+  display: none;
+}
+.overlay-panel.mode-drag .overlay-handles {
+  display: block;
+}
+.overlay-handle {
+  position: absolute;
+  z-index: 5;
+}
+.overlay-handle.h-n {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.overlay-handle.h-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.overlay-handle.h-e {
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.overlay-handle.h-w {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.overlay-handle.h-ne {
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.overlay-handle.h-nw {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+.overlay-handle.h-se {
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+.overlay-handle.h-sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.overlay-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 36px 10px;
+  line-height: 1.6em;
+  font-weight: 700;
+  font-size: 20px;
+  /* The visible panel stays fully opaque; only the top ~1 line fades, so lines
+     fade as they scroll past the panel's top edge (i.e. beyond the panel's
+     size) — independent of line count. 1.6em == one line-height at 20px font.
+     MIN_H (overlay-band.js) is sized so this band never covers the whole panel. */
+  -webkit-mask-image: linear-gradient(
+    to top,
+    #000 0,
+    #000 calc(100% - 1.6em),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to top,
+    #000 0,
+    #000 calc(100% - 1.6em),
+    transparent 100%
+  );
+}
+.overlay-scroll::-webkit-scrollbar {
+  display: none; /* scrollable, but no visible scrollbar */
+}
+.overlay-text {
+  /* Bottom-align: short content sits in the solid zone near the bottom; once it
+     overflows, margin-top auto collapses and the box scrolls normally. */
+  margin-top: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.overlay-confirmed {
+  color: #000;
+}
+.overlay-prediction {
+  color: #888;
+}
+/* Blinking typewriter caret; color set inline by overlay-band.js (gray over a
+   prediction tail, black over confirmed). Hidden when not typing. */
+.overlay-caret {
+  margin-left: 1px;
+  animation: overlay-caret-blink 1s steps(1, end) infinite;
+}
+@keyframes overlay-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---- dialogs ---- */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.dialog {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  width: 360px;
+  max-width: 90vw;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+.dialog h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Tall forms (parameters) scroll inside the dialog; scrollbar hidden. */
+  max-height: 70vh;
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.dialog-body::-webkit-scrollbar {
+  display: none; /* Chromium */
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #555;
+}
+.field input,
+.field select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d6d6d3;
+  border-radius: 6px;
+  font-size: 13px;
+}
+/* Toggle/select rows: label left, control right on a single line. */
+.field-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.field-row select {
+  flex: 0 0 auto;
+}
+.field-row input[type="checkbox"] {
+  height: auto;
+  width: auto;
+  margin: 0;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.dialog-actions button {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid #d6d6d3;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.dialog-actions button.primary {
+  background: #2383e2;
+  color: #fff;
+  border-color: #2383e2;
+}
+
+/* WS debug panel (디버그 토글) — collapsible overlay pinned to the stage's top-left.
+   Lists each received frame's raw confirmed/prediction. Hidden until toggled. */
+.debug-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 46%;
+  max-width: 560px;
+  max-height: 60%;
+  display: none;
+  flex-direction: column;
+  background: rgba(17, 19, 23, 0.93);
+  color: #d7dae0;
+  border: 1px solid #2b2f36;
+  border-radius: 0 0 8px 0;
+  z-index: 50;
+  overflow: hidden;
+}
+.debug-panel.open {
+  display: flex;
+}
+.debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  background: #1b1e24;
+  border-bottom: 1px solid #2b2f36;
+  font-size: 12px;
+  font-weight: 600;
+}
+.debug-clear {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #3a3f47;
+  background: #262a31;
+  color: #d7dae0;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.debug-clear:hover {
+  background: #30353d;
+}
+.debug-log {
+  overflow-y: auto;
+  padding: 4px 8px;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.debug-line {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.debug-seq {
+  color: #7f8794;
+  font-weight: 700;
+}
+.debug-body {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.debug-key {
+  color: #9ecbff; /* rendered via <b> (bold); tinted so C:/P: stand out */
+}
+.debug-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.debug-close {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #3a3f47;
+  background: #262a31;
+  color: #d7dae0;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.debug-close:hover {
+  background: #30353d;
+}

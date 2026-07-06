@@ -1,0 +1,75 @@
+# JEPA Neural Tokenizer config — single source of truth.
+# run: bash run_train_NeuralTokenizer.sh config.yaml
+# `stage` selects the pipeline:
+#   stage 1 = masked-latent JEPA SSL of the Conv+DAAM+Conformer encoder
+#   stage 2 = FSQ + mixed-radix + HiFi-GAN reconstruction (needs train.stage1_ckpt)
+
+stage: 1
+
+data:
+  # Manifest JSON: {"data": [{"audio_id": "spk/utt0001.wav"}, ...]}
+  train_manifest: /path/to/train.json
+  valid_manifest:                       # optional (stage 1 only); "" / null disables
+  audio_root: /path/to/wavs             # audio_path = audio_root/audio_id
+  sample_rate: 24000
+  clip_seconds: 15.0                    # training clip length (seconds)
+
+model:
+  # Conv front-end: hop = prod(strides) = 9600 -> 2.5 Hz frame rate.
+  conv_channels: [64, 128, 256, 384, 512, 512]
+  conv_strides: [8, 8, 5, 5, 6]
+  stem_kernel: 7
+  # Density Adaptive Attention (Gaussian-mixture gating)
+  use_daam: true
+  daam_k: 4
+  daam_alpha: 0.05
+  # Conformer encoder
+  num_layers: 8
+  num_heads: 16
+  ff_mult: 4
+  conv_kernel: 15
+  dropout: 0.0
+  # Stage-1 JEPA predictor + masking + EMA teacher
+  pred_layers: 2
+  pred_heads: 8
+  mask_ratio: 0.5
+  mask_min_span: 2
+  ema_decay: 0.996
+  # Stage-2 FSQ + mixed-radix codec
+  fsq_dim: 128
+  fsq_level: 4
+  pack_group: 7                         # 128/7 -> 19 groups -> 47.5 tok/s @ 2.5 Hz
+  # Stage-2 HiFi-GAN decoder (dec_channels: [] -> auto-halve from d_model)
+  dec_channels: []
+  dec_min_channels: 16
+  # Stage-2 loss weights
+  lambda_stft: 2.0
+  lambda_gan: 0.1
+  disc_warmup: 5000                     # steps with discriminator frozen
+
+optim:
+  # Stage 1: lr 1.5e-4, batch 32, ~24k steps. Stage 2: batch 8, ~29k steps.
+  learning_rate: 1.5e-4
+  adam_beta1: 0.8
+  adam_beta2: 0.99
+  weight_decay: 1.0e-3
+  warmup_steps: 2000
+  max_steps: 24000
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+
+train:
+  output_dir: /path/to/ckpts/neural_tokenizer_stage1
+  logging_steps: 50
+  save_steps: 2000
+  eval_steps: 2000
+  save_total_limit:
+  num_workers: 4
+  seed: 42
+  init_from:                            # (stage 1) optional Stage-1 .pt warm-start
+  stage1_ckpt:                          # (stage 2) REQUIRED: frozen encoder source
+
+eval:                                   # used by eval_neural_tokenizer.py
+  test_manifest: /path/to/test.json
+  audio_root: /path/to/wavs
