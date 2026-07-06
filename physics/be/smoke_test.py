@@ -40,12 +40,14 @@ def make_grid(n: int = 11) -> tuple[np.ndarray, np.ndarray]:
     return verts.astype(np.float64), np.asarray(faces, dtype=np.int64)
 
 
-def _post_predict(payload: dict) -> dict:
+def _post_json(path: str, payload: dict) -> dict:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"{BE_URL}/predict", data=data, headers={"Content-Type": "application/json"}
+        f"{BE_URL}{path}", data=data, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    # 60s: /chat이 서버측 LLM 타임아웃(CHAT_LLM_TIMEOUT 기본 30s)을 다 쓰고
+    # in-band 폴백으로 응답하는 경우보다 길어야 한다.
+    with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -71,9 +73,54 @@ def main() -> int:
         print(f"FAIL: cannot reach {BE_URL} — is the server running? ({e})")
         return 1
 
-    # --- /predict ------------------------------------------------------------
+    # --- /chat (rule-based 폴백 — CHAT_LLM_* env 없이도 CI에서 결정적) ---------
     try:
-        out = _post_predict(payload)
+        empty = _post_json("/chat", {"question": "괜찮아?", "analysis": {}})
+        assert empty.get("success") is True and empty.get("answer"), f"/chat empty: {empty}"
+        assert empty.get("mode") in ("fallback", "llm"), f"unexpected mode: {empty}"
+
+        sample_analysis = {
+            "components": [
+                {"id": "panel", "name": "패널", "max_disp": 0.05, "threshold": 0.03,
+                 "ratio": 1.67, "status": "FAIL", "max_node": 7},
+            ],
+        }
+        chat = _post_json("/chat", {"question": "어디가 파손됐어?", "analysis": sample_analysis})
+        assert chat.get("success") is True and chat.get("answer"), f"/chat: {chat}"
+        # 폴백 모드면 결정적으로 FAIL 부품명이 답에 들어간다 (LLM 모드는 내용 미보장).
+        if chat.get("mode") == "fallback":
+            assert "패널" in chat["answer"], f"fallback answer missing component: {chat}"
+        print(f"[chat] mode={chat.get('mode')} — answer ok")
+    except urllib.error.HTTPError as e:
+        print(f"FAIL: /chat HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
+        return 1
+    except (urllib.error.URLError, TimeoutError) as e:
+        # LLM env가 걸린 서버가 외부 API에 매달리면 여기로 온다 (read timeout 포함).
+        print(f"FAIL: /chat unreachable/timeout — {e}")
+        return 1
+
+    # --- /simulate?model=free_fall (자유 낙하 다중 접촉) ----------------------
+    # 기본 모델이 free_fall이므로 낙하 경로를 e2e로 확인. 첫 프레임은 공중(최저
+    # 정점이 drop_height만큼 떠 있음), 마지막은 바닥 정착.
+    try:
+        ff = _post_json("/simulate?model=free_fall", {
+            "mesh_base64": payload["mesh_base64"], "file_format": FILE_FORMAT,
+            "action": {"drop_height": 1.0, "restitution": 0.3, "frames": 30},
+        })
+        assert ff.get("success") and ff.get("num_frames") == 30, f"free_fall: {ff}"
+        m, n, t = ff["num_faces"], ff["num_vertices"], ff["num_frames"]
+        frames = np.frombuffer(base64.b64decode(ff["frames_b64"]), dtype="<f4").reshape(t, n, 3)
+        z0_min, zlast_min = float(frames[0, :, 2].min()), float(frames[-1, :, 2].min())
+        print(f"[free_fall] T={t} N={n} — airborne z_min={z0_min:.3f}, settled z_min={zlast_min:.3f}")
+        assert abs(z0_min - 1.0) < 1e-2, f"first frame not airborne at h=1: {z0_min}"
+        assert zlast_min > -0.02, f"settled frame punches through floor: {zlast_min}"
+    except urllib.error.HTTPError as e:
+        print(f"FAIL: /simulate free_fall HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
+        return 1
+
+    # --- /predict?model=metal_dent (충격 변형 — 기본 모델과 무관하게 고정) -----
+    try:
+        out = _post_json("/predict?model=metal_dent", payload)
     except urllib.error.HTTPError as e:
         print(f"FAIL: /predict HTTP {e.code} — {e.read().decode('utf-8', 'replace')}")
         return 1
@@ -89,10 +136,12 @@ def main() -> int:
 
     center_dz = float(new_verts[center, 2] - verts[center, 2])
     corner_dz = float(new_verts[corner, 2] - verts[corner, 2])
-    print(f"[verify] center Δz={center_dz:+.4f} (expect ~-0.3), corner Δz={corner_dz:+.4f} (expect ~0)")
+    print(f"[verify] center Δz={center_dz:+.4f} (expect ~-0.3), corner Δz={corner_dz:+.4f} (expect ≪ center)")
 
-    assert abs(center_dz - (-0.3)) < 1e-6, f"impact node not deformed as expected: {center_dz}"
-    assert abs(corner_dz) < 1e-9, f"node outside radius moved: {corner_dz}"
+    # 모델-불문 검증: 충격점은 힘(-0.3)만큼 눌리고, 반경 밖 노드는 훨씬 덜 움직인다.
+    # (dummy=선형 hard-cutoff → corner 0; metal_dent=가우시안 → 작은 tail.)
+    assert abs(center_dz - (-0.3)) < 1e-3, f"impact node not deformed as expected: {center_dz}"
+    assert abs(corner_dz) < 0.1 * abs(center_dz), f"node outside radius moved too much: {corner_dz}"
 
     print("OK ✓ end-to-end /predict deformation verified")
     return 0

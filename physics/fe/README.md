@@ -1,14 +1,28 @@
 # Physics Impact Simulator — FE (Windows desktop)
 
-PySide6 + PyVista 데스크톱 시뮬레이터. 로컬 메쉬를 열어 3D로 보고, 노드를
-클릭해 충격점을 고른 뒤 force를 주면 BE `/predict`로 변형 메쉬를 받아
-원본(wireframe) 위에 결과(solid)를 겹쳐 보여준다.
+PySide6 + PyVista 데스크톱 시뮬레이터. 메쉬를 3D로 보고, 노드를 클릭해 충격점을
+고른 뒤 force를 주면 **시간에 따른 변형 애니메이션**을 재생하고, 변위 크기를
+히트맵('turbo')으로 칠해 보여준다. 시뮬 직후 **부품별 충격 분석**(좌측 [분석] 탭)과
+**LLM 기반 QA 챗**(좌측 하단 입력창 → [챗] 탭)을 제공한다. (피치 데모: 모델 자리에
+절차적 mock을 끼워 "우리가 만들 생성 모델 + 시뮬레이터"를 어필.)
 
-**모델 연결 없이도 동작한다.** 시작 시 내장 더미 메쉬(21×21 grid)가 자동으로 떠서
-노드 피킹·force 입력·변형 표시를 바로 확인할 수 있다. BE/모델이 준비되지 않은
-동안에는 **Simulate가 로컬에서 동일 수식(선형 감쇠)으로 변형을 계산**해 표시하며
-(상단 배너에 `DUMMY 모드` 명시), 모델이 연결되면 자동으로 **BE가 돌려준 메쉬**를
-표시한다(`LIVE` 배너).
+**모델 연결 없이도 동작한다.** 시작 시 기본 시나리오(**허블 우주망원경** — NASA
+public domain 자산, `assets/hubble.obj`)가 자동으로 떠서 낙하·애니메이션을 바로
+확인할 수 있다. BE/모델이 준비되지 않은 동안에는 **Simulate가 로컬 미러 궤적을 계산**해
+재생하며(배너 `DUMMY 모드`), 모델이 연결되면 자동으로 **BE `/simulate` 프레임**을
+재생한다(`LIVE` 배너). 로컬/BE 궤적은 동일 수식이라 거동이 같다. 분석은 FE가 frames에서
+직접 계산하므로 두 모드의 수치가 동일하다.
+
+### 시뮬레이션 모드 (Mode 드롭다운)
+
+| 모드 | 동작 | 컨트롤 |
+|---|---|---|
+| **자유 낙하** (기본) | 물체를 높이 h·자세에서 바닥으로 떨어뜨려 **여러 접촉점에 동시 충격** (다중 dent + 반발계수 감쇠 바운스) | 낙하 높이 / 낙하 자세 / 반발계수 |
+| **충격** | 클릭한 노드에 force를 가하는 국소 충격 | 노드 피킹 / Force X·Y·Z / Radius |
+
+자유 낙하는 낙하·바운스라는 **전역 강체 운동**이 섞이므로, 히트맵과 분석은 프레임별
+전역 강체를 제거한 **변형장**만 색칠·측정한다(물체는 눈에 보이게 떨어지되 색은 dent만).
+낙하로 물체가 넘어지면 그 자세 변화는 분석 요약에 "낙하 후 자세 변화 X°"로 별도 표기된다.
 
 ## 실행 (Windows)
 
@@ -29,23 +43,60 @@ python app.py
 
 ## 사용법
 
-1. 시작 시 **내장 더미 메쉬**가 떠 있다(중앙 노드가 기본 충격점). 또는 **Load mesh…**로
-   `.vtk` / `.obj` / `.stl` / `.ply` / `.off` 파일을 연다.
-2. 뷰포트에서 노드를 **클릭** → `Impact node`가 설정되고 주황 구로 표시.
-3. **Force X/Y/Z**(충격 방향·세기), 선택적으로 **Radius**(0=자동) / **Scale** 입력.
-4. **Simulate** → 변형 결과(빨강 solid)가 원본(파랑 wireframe) 위에 표시.
-5. **Reset** → 원본만 다시 표시.
+1. **Scenario** 드롭다운으로 내장 메쉬(허블 우주망원경 / 스마트폰 / 금속 판 / 캔)를
+   고르거나, **Load mesh…**로 파일을 연다 — **meshio가 지원하는 모든 확장자**(vtk/vtu/
+   obj/stl/ply/off/msh/bdf/inp/mesh/… )를 받으며, 체적 메쉬는 경계면을 자동 추출해 표시한다.
+   (자산은 권장 낙하 자세·높이가 미리 설정됨 — 예: 스마트폰은 "화면면 아래".)
+2. **Mode**로 자유 낙하 / 충격을 고른다.
+   - **자유 낙하**: **낙하 높이**·**낙하 자세**(그대로/모서리/측면 + 자산 프리셋)·
+     **반발계수**를 정한다.
+   - **충격**: 뷰포트에서 노드를 **클릭**해 `Impact node`(주황 구)를 고르고
+     **Force X/Y/Z**·선택적 **Radius**(0=자동)를 정한다. (노드 선택은 Simulate 전에만 —
+     결과 재생 중 클릭은 카메라 조작 전용이며, 바꾸려면 **Reset** 후 다시 클릭.)
+3. **Scale**(변형 배율)은 두 모드 공용.
+4. **Simulate** → 변형 애니메이션 재생 + 변형 히트맵. **▶/⏸**·**Loop**·**Timeline**
+   슬라이더로 재생 제어, **Speed(fps)**로 속도 조절. (낙하 모드는 바닥 평면이 함께 표시.)
+5. **Reset** → 원본만 다시 표시 (분석 표는 마지막 결과 유지).
+
+### 부품별 충격 분석 (좌측 [분석] 탭)
+
+Simulate 직후 `analysis.py`가 frames (T,N,3)에서 부품별 지표를 계산한다:
+최대 변위 / 속도 프록시(프레임 차분) / 충격 점수, 부품별 **임계값 대비 상태**
+(OK·WARN·FAIL). 3D 뷰포트에는 부품별 최대 충격 위치 마커(라벨)와 **임계 초과
+정점(빨간 점)**이 표시된다. 표의 행을 선택하면 재질/비고 등 상세가 뜬다.
+
+부품 정의는 자산 sidecar(`assets/<name>.components.json`, `prep_*.py`가 bake — 부품별
+vertex 범위/인덱스·임계값·재질)에서 온다. 허블: **태양전지판·안테나(취약)** vs 본체(견고).
+스마트폰: **액정(취약, 임계 최저)** vs 후면 케이스·측면 프레임 — 액정에는 낙하 시
+표시/터치 불능 면적(%)을 재는 `screen` 기능 분석이 붙는다. 부품 정의가 없는 메쉬
+(판/캔/사용자 파일)는 "전체 메쉬" 의사 부품 + 자동 임계값(bbox 대각선 5%)으로 분석한다.
+
+### LLM QA 챗 (좌측 하단 입력창 → [챗] 탭)
+
+분석 결과에 대해 자연어로 질문한다 ("태양전지판 괜찮아?", "어디가 가장 심해?").
+질문은 압축 분석 요약(JSON)과 함께 BE `/chat`으로 전송된다 — BE에 `CHAT_LLM_*`
+env가 설정돼 있으면 **LLM 답변**(`[LLM]` 태그), 아니면 **rule-based 답변**(`[규칙]`).
+서버 미연결 시엔 동일한 규칙 엔진(`chat_fallback.py`, BE와 미러)이 로컬에서 즉답한다
+(`[규칙·로컬]`).
+
+### 자산 재생성 (개발용)
+
+```bash
+python assets/prep_hubble.py       # NASA 부품 STL → hubble.obj + components.json (public domain)
+python assets/prep_smartphone.py   # ProcTHOR Cellphone STL → smartphone.obj + components.json (MIT)
+```
+자산 파일을 갈아치우면 vertex 인덱스가 바뀌므로 **반드시 prep으로 재-bake**한다.
 
 ### 동작 모드 배너 (상태 점 아래)
 
 | 배너 | 조건 | Simulate 동작 |
 |---|---|---|
-| 🟢 `LIVE · BE 연결됨` | `/health` ready 모델 존재 | BE `/predict` 결과 메쉬 표시 |
-| 🟣 `BE 로딩 중` | 모델 LOADING | 로컬 더미 반응 (임시) |
-| 🟠 `DUMMY 모드` | 서버 미연결/모델 미준비 | **로컬** 선형 감쇠 변형 (로그에 `(로컬 더미 반응)`) |
+| 🟢 `LIVE · BE 연결됨` | `/health` ready 모델 존재 | BE `/simulate` 프레임 재생 |
+| 🟣 `BE 로딩 중` | 모델 LOADING | 로컬 `metal_dent` 재생 (임시) |
+| 🟠 `DUMMY 모드` | 서버 미연결/모델 미준비 | **로컬** `metal_dent` 궤적 재생 (로그에 `(로컬 metal_dent)`) |
 
-로컬 더미 반응은 BE `models/dummy/DummyLinearDeformer`와 **동일한 수식**이라, 모델
-연결 전후로 같은 dummy 거동을 보인다. 상태 점/모델 드롭다운은 `/health` 기준이며
+로컬 반응은 BE `models/metal_dent/MetalDentSimulator`와 **동일한 수식**이라, 모델
+연결 전후로 같은 거동을 보인다. 상태 점/모델 드롭다운은 `/health` 기준이며
 `Refresh` 또는 매 Simulate 직전에 갱신된다.
 
 ## 노드 인덱스 일관성
@@ -64,7 +115,7 @@ GitHub Actions가 **빌드마다 patch를 자동으로 +1** 한다(아래 CI 참
 
 ```bat
 pip install pyinstaller
-pyinstaller --noconfirm --windowed --name PhysicsSimulator --add-data "VERSION;." app.py
+pyinstaller --noconfirm --windowed --name PhysicsSimulator --add-data "VERSION;." --add-data "assets;assets" app.py
 # dist\PhysicsSimulator\PhysicsSimulator.exe
 ```
 PyVista/VTK 데이터가 누락되면 `--collect-all pyvista --collect-all pyvistaqt

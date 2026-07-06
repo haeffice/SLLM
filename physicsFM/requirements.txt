@@ -1,0 +1,9 @@
+# physicsFM — 데이터 파이프라인/학습 의존성
+# GPU torch는 인덱스 지정 설치가 필요해 이 파일에 넣지 않는다:
+#   .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu126
+# 선택(physicsnemo 백본 어댑터 사용 시):
+#   .venv/bin/pip install nvidia-physicsnemo torch_geometric
+numpy
+h5py
+scipy
+pyyaml

@@ -7,8 +7,8 @@ from enum import Enum
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from config import default_model_id, enabled_model_ids, load_one
-from routers import predict
+from config import chat_llm_config, default_model_id, enabled_model_ids, load_one
+from routers import chat, predict, simulate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,10 +105,15 @@ def health(request: Request):
     else:
         overall = "ok"
 
+    llm_cfg = chat_llm_config()  # /chat 모드 노출 — FE가 [LLM]/[규칙] 기대치 표시용
     body = {
         "status": overall,
         "default_model": request.app.state.default_model_id,
         "uptime_s": round(time.monotonic() - request.app.state.started_at, 1),
+        "chat": {
+            "llm_configured": llm_cfg is not None,
+            "model": llm_cfg["model"] if llm_cfg else None,
+        },
         "models": {
             mid: {
                 "status": s.value,
@@ -129,3 +134,5 @@ def _device_for_loaded(model) -> str | None:
 
 
 app.include_router(predict.router)
+app.include_router(simulate.router)
+app.include_router(chat.router)

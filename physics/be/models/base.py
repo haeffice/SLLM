@@ -50,3 +50,18 @@ class BaseMeshPredictor(ABC):
             ValueError: 잘못된 action(범위 밖 impact_node, 길이≠3 force 등).
                         router에서 400으로 매핑된다.
         """
+
+    def simulate(
+        self, vertices: np.ndarray, faces: np.ndarray, action: dict
+    ) -> np.ndarray:
+        """충격에 대한 시간에 따른 변형 궤적을 반환 (`POST /simulate`용).
+
+        Returns:
+            frames: (T, N, 3) float — T개 프레임의 노드 좌표. frames[0]은 보통
+            원본에 가깝고 frames[-1]은 정착 상태다.
+
+        기본 구현은 predict() 단일 프레임을 (1, N, 3)로 감싼다 — 정적 모델도
+        그대로 동작한다. 시간 시퀀스를 내는 모델(예: MetalDentSimulator)은
+        이 메서드를 오버라이드한다.
+        """
+        return np.asarray(self.predict(vertices, faces, action), dtype=np.float64)[None]
